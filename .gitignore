@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Environments and package builds
+.venv/
+venv/
+env/
+build/
+dist/
+*.egg-info/
+
+# uv and tooling caches
+.uv-cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local settings and environment files
+.env
+.env.*
+!.env.example
+*.local
+.vscode/settings.json
+.idea/
+
+# Runtime data, logs, and generated artifacts
+*.db
+*.sqlite
+*.sqlite3
+*-wal
+*-shm
+*.log
+logs/
+.repopilot/
+
+# Credentials and private configuration
+.aws/
+.kube/
+.ssh/
+.secrets/
+secrets/
+.netrc
+.npmrc
+.pypirc
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.*
+*_credentials.*
+secrets.*

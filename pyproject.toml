@@ -1,0 +1,55 @@
+[project]
+name = "repopilot"
+version = "0.1.0"
+description = "An evaluation-driven autonomous coding agent"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "rich>=15.0.0",
+    "typer>=0.29.1",
+]
+
+[project.scripts]
+repopilot = "repopilot.cli.main:main"
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src"]
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = ["--strict-markers"]
+markers = [
+    "unit: deterministic tests for isolated behavior",
+    "contract: tests for agreements between package boundaries",
+    "integration: tests for collaborating components",
+    "security: tests for trust and authorization boundaries",
+    "e2e: offline end-to-end workflow tests",
+]
+
+[tool.coverage.run]
+source = ["repopilot"]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.1",
+    "pre-commit>=4.7.0",
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.5",
+]
