@@ -1,5 +1,6 @@
 """CLI and presentation integration tests."""
 
+import re
 import subprocess
 import sys
 from importlib.metadata import version
@@ -15,14 +16,27 @@ from repopilot.cli.main import app
 pytestmark = pytest.mark.integration
 
 runner = CliRunner()
+_ANSI_ESCAPE_SEQUENCE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _normalize_help_text(output: str) -> str:
+    without_ansi = _ANSI_ESCAPE_SEQUENCE.sub("", output)
+    return " ".join(without_ansi.split())
 
 
 def test_help_lists_doctor_and_version_option() -> None:
-    result = runner.invoke(app, ["--help"])
+    result = runner.invoke(app, ["--help"], color=False, terminal_width=100)
+    help_text = _normalize_help_text(result.stdout)
 
     assert result.exit_code == 0
-    assert "doctor" in result.stdout
-    assert "--version" in result.stdout
+    assert "doctor" in help_text
+    assert "--version" in help_text
+
+
+def test_help_text_normalization_strips_ansi_codes() -> None:
+    styled_help = "\x1b[1m--ver\x1b[0msion"
+
+    assert "--version" in _normalize_help_text(styled_help)
 
 
 def test_version_option_uses_installed_distribution_metadata() -> None:
