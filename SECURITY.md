@@ -41,6 +41,23 @@ Developer source code, uncommitted changes, OS files, credentials, Git state, mo
 
 **Approval is not a substitute for technical isolation.** Approval must bind cryptographically to a canonical action digest and expire with the run; no blanket "approve everything" in v1.
 
+The implemented `DefaultPolicyEngine` uses capability categories attached to trusted `ToolDefinition`
+metadata and an application-supplied immutable `AuthorizationContext`; capability claims in model
+arguments are ignored. Missing, denied, or prohibited capabilities fail closed. It allows scoped
+repository reads, staging mutations only in a staging workspace, and sandbox-test capability only
+in a sandbox workspace. Live-repository mutation returns `REQUIRE_APPROVAL`. Host commands,
+network, credential access, dangerous Git operations, and policy-configuration changes are denied.
+Run-specific restrictions can only remove capabilities. The context's frozen dataclass prevents
+accidental mutation; it is not a security boundary against hostile Python code in the same process,
+so only trusted application code may construct and supply it.
+
+The live-write `ApprovalRequest` binds run and call IDs, canonical validated-argument digest,
+root-relative resource scope, workspace/baseline identity, and an expiry. The digest is a binding
+value, not authentication or evidence of consent. This milestone accepts no approval records and
+does not implement interactive approval, replay prevention, or durable approval storage. A future
+trusted application layer must supply and enforce user-originated, exact-action approval records;
+permanently denied capabilities cannot be escalated by approval.
+
 ## 4. Path and file security
 - Determine canonical root on trusted host; normalize and compare every requested path against it.
 - Forbid absolute paths outside root, parent traversal, UNC/network paths, device paths, mount escape and symlink escape.
@@ -50,6 +67,11 @@ Developer source code, uncommitted changes, OS files, credentials, Git state, mo
 - Exclude binaries, large files, `.git`, virtual environments, generated artifacts, and `node_modules` from the model context.
 - Check patch file count, byte count, encoding, line count and current content hash.
 - Preserve original repository on cancellation and tool error; final apply checks that baseline still matches.
+
+`DefaultPolicyEngine` currently performs read-only canonical and symlink-aware path checks against
+synthetic test fixtures. These checks are not race-free and do not perform filesystem operations.
+Any future read/write tool must revalidate the actual target immediately before use with suitable
+filesystem-level protections; policy decisions alone do not secure execution.
 
 ## 5. Sandbox baseline
 A **reference Docker runner** must:
@@ -86,7 +108,10 @@ Rootless Docker offers defense in depth but does not eliminate kernel or contain
 - Sanitize ANSI escape sequences and control characters in terminal displays and log exports.
 - Keep local metadata 30 days by default, artifacts 7 days; see [DATABASE.md](DATABASE.md).
 - Export warns that diffs and reports may contain private code; file permissions restricted to user.
-- Every denied or approved tool request creates an audit event, including exact scope hash and actor.
+- `DefaultPolicyEngine` returns structured decisions with stable reason codes and safe tool,
+  workspace, and scope-digest metadata. These results are not currently persisted or tamper-resistant.
+- The future execution/application layer must create durable audit events for denied and approved
+  requests, including exact scope hash and actor, without recording prompts, secrets, or file contents.
 
 ## 9. Security verification
 Required security tests: path traversal, symlink escape, absolute path, race revalidation, dangerous commands, command argument injection, output poisoning, prompt injection, sandbox network disabled, no Docker socket, timeout/OOM, redaction, approval replay and approval scope mismatch. All security blocking tests must pass before releasing a write-capable version.
