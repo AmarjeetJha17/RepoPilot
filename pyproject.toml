@@ -5,6 +5,7 @@ description = "An evaluation-driven autonomous coding agent"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "openai>=3.55.1",
     "rich>=15.0.0",
     "typer>=0.29.1",
 ]
