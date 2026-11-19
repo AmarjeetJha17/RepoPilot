@@ -60,7 +60,9 @@ flowchart TD
 - `application`: use-case orchestration; creates run config, owns approval UX contract.
 - `agent`: state machine, step budgets, retry policy, tool dispatch; never bypasses policy.
 - `providers`: model I/O normalization and provider error classification; bounded retries belong
-  to the agent runtime.
+  to the agent runtime. The OpenAI Responses adapter translates text and function-call history
+  with correlated call IDs and rejects reasoning/continuation items the neutral response contract
+  cannot represent.
 - `context`: file discovery, filtering, symbol index, bounded search, prompt assembly.
 - `tools`: typed read, search, patch, git and verification interfaces.
 - `security`: path authorization, tool permissions, redaction, sandbox restrictions.

@@ -68,6 +68,7 @@ Rootless Docker offers defense in depth but does not eliminate kernel or contain
 - `.env.example` may contain variable names and dummy values only; `.env` is gitignored.
 - Use provider-specific outbound client only; HTTPS with verified certificates; request timeouts.
 - Before cloud model calls, warn that selected source snippets are transmitted to the configured provider. Support mock/local adapter for offline validation.
+- `OpenAIModelProvider` reads credentials through the official SDK environment mechanism, disables SDK retries, bounds requests by the caller timeout, and never logs provider payloads. Its responses are untrusted proposals; the adapter does not execute calls or bypass `PolicyEngine`. Live use sends request messages and function schemas to OpenAI and may incur API charges; routine tests use injected fake clients and make no network requests.
 - Redact patterns such as API keys, bearer tokens, passwords and common private-key blocks; redaction is best-effort, so **exclude** sensitive files at source rather than trusting regex alone.
 - Tracing exports disabled by default; if enabled, explicit endpoint/configuration and content-minimized spans.
 

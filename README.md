@@ -32,11 +32,42 @@ daemon, inspect credentials, or modify files. Missing tools and a non-Git
 directory are warnings; it exits with status 1 only when Python is older than
 3.12. Other warnings return status 0.
 
+## OpenAI provider adapter
+
+The offline `MockModelProvider` remains available for deterministic tests. Code
+that needs the live Responses API can explicitly instantiate
+`repopilot.providers.adapters.openai.OpenAIModelProvider`; the functional CLI
+does not select a model provider yet. The SDK reads `OPENAI_API_KEY` from the
+process environment. Keep the key outside the repository and never put it in
+source files or command output.
+
+The adapter sends the `ModelRequest` messages and function schemas to OpenAI.
+Do not send private repository content unless you have chosen to do so. API
+requests may incur charges. Normal tests, lint, type checking, and builds use
+mocked responses and make no API calls.
+
+For an explicit, minimal live check, configure `OPENAI_API_KEY` and run:
+
+```bash
+uv run python scripts/openai_smoke.py --model YOUR_MODEL_ID
+```
+
+This sends only a fixed “reply with OK” prompt, has a 15-second timeout, and
+does not read repository files or execute tools. It reports success without
+printing the model response. The adapter currently supports completed text
+responses and function-call proposals. It rejects mixed text and function-call
+outputs, reasoning items, refusals, incomplete responses, and other output
+types because the provider-neutral response contract cannot preserve their
+continuation data safely. It also rejects assistant history entries that
+combine text and tool calls because their ordering is not represented.
+
 ## Current status
 
-The initial CLI and read-only environment check are implemented. Agent
-orchestration, model integration, repository tools, sandboxing, persistence,
-and evaluation execution are not implemented yet.
+The initial CLI and read-only environment check, agent lifecycle contracts,
+mock provider, and OpenAI Responses API adapter are implemented. Agent
+orchestration, repository tools, sandboxing, persistence, and evaluation
+execution are not implemented yet. The OpenAI adapter has not been tested
+against a live API invocation.
 
 The project pins Python 3.12 in `.python-version`; `pyproject.toml` supports
 Python 3.12 and newer.
