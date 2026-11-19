@@ -59,7 +59,8 @@ flowchart TD
 - `cli`: argument parsing, interactive confirmations, user display; no direct filesystem mutation.
 - `application`: use-case orchestration; creates run config, owns approval UX contract.
 - `agent`: state machine, step budgets, retry policy, tool dispatch; never bypasses policy.
-- `providers`: model messages and typed tool-call normalization; provider-specific retries.
+- `providers`: model I/O normalization and provider error classification; bounded retries belong
+  to the agent runtime.
 - `context`: file discovery, filtering, symbol index, bounded search, prompt assembly.
 - `tools`: typed read, search, patch, git and verification interfaces.
 - `security`: path authorization, tool permissions, redaction, sandbox restrictions.
@@ -187,29 +188,21 @@ sequenceDiagram
 
 Detailed threat model: [SECURITY.md](SECURITY.md).
 
-## 9. Core contracts (illustrative pseudocode)
+## 9. Core contracts
 ```python
 from typing import Protocol
-from pydantic import BaseModel
-
-class ToolCall(BaseModel):
-    id: str
-    name: str
-    arguments: dict[str, object]
-
-class ToolResult(BaseModel):
-    call_id: str
-    ok: bool
-    output: str
-    truncated: bool = False
+from repopilot.providers.base import ModelRequest, ModelResponse
 
 class ModelProvider(Protocol):
-    async def next_action(self, messages: list[dict[str, object]], tools: list[dict[str, object]]) -> ToolCall | str: ...
-
-class PolicyEngine(Protocol):
-    def authorize(self, call: ToolCall, workspace: str) -> str: ...  # allow/deny/approval
+    async def next_action(self, request: ModelRequest) -> ModelResponse: ...
 ```
-These are sketches; final contracts should use more precise tagged unions and Pydantic schemas.
+`ModelResponse` is a tagged union of non-empty text and one-or-more proposed tool calls; a text
+response represents zero calls. Provider-neutral contracts carry model identity, finish reason,
+and optional usage. Provider failures expose stable retry classification. The mock adapter is
+offline, deterministic, and rejects overlapping calls on one instance. A concrete adapter must
+honor the request timeout and validate SDK output before constructing these values. A well-formed
+tool call remains untrusted and requires a separate policy decision; the provider interface does
+not authorize execution.
 
 ## 10. Budget and failure handling
 Default proposed limits: max 30 model steps; max 3 repair attempts; max 15-minute wall clock; max 60-second individual command; max 1 MiB captured output per command (truncate sooner in prompts); configurable token and estimated USD caps. Users may lower limits; raising limits requires explicit configuration. Abort on invalid path, runaway tool call, sandbox failure, budget exhaustion, or cancellation.
