@@ -114,17 +114,25 @@ Folder names are intentional target architecture; files will be created incremen
 stateDiagram-v2
     [*] --> CREATED
     CREATED --> INSPECTING
+    CREATED --> CANCELLED: cancelled before work
     INSPECTING --> PLANNING
-    PLANNING --> EXECUTING
-    EXECUTING --> VERIFYING
-    VERIFYING --> EXECUTING: retry within budget
-    VERIFYING --> AWAITING_APPROVAL: candidate patch ready
-    AWAITING_APPROVAL --> COMPLETED: approved and applied
-    AWAITING_APPROVAL --> BLOCKED: rejected
     INSPECTING --> FAILED: unrecoverable
+    INSPECTING --> CANCELLED: user cancels
+    PLANNING --> EXECUTING
+    PLANNING --> FAILED: unrecoverable
+    PLANNING --> CANCELLED: user cancels
+    EXECUTING --> VERIFYING
     EXECUTING --> FAILED: unrecoverable
     EXECUTING --> CANCELLED: user cancels
+    VERIFYING --> EXECUTING: retry within budget
+    VERIFYING --> AWAITING_APPROVAL: candidate patch ready
     VERIFYING --> PARTIAL: budget exhausted
+    VERIFYING --> FAILED: unrecoverable
+    VERIFYING --> CANCELLED: user cancels
+    AWAITING_APPROVAL --> COMPLETED: approved and applied
+    AWAITING_APPROVAL --> BLOCKED: rejected
+    AWAITING_APPROVAL --> FAILED: unrecoverable
+    AWAITING_APPROVAL --> CANCELLED: user cancels
     COMPLETED --> [*]
     FAILED --> [*]
     BLOCKED --> [*]
@@ -132,6 +140,10 @@ stateDiagram-v2
     PARTIAL --> [*]
 ```
 The result has a distinct `verified` boolean; `COMPLETED` alone is not proof of correctness.
+Cancellation is allowed from `CREATED` and every active phase so a requested stop does not
+require inventing progress. Unrecoverable processing failures may end any processing or
+approval phase; failure to create a run does not produce a run record. These additions preserve
+the terminal-state rule and leave verification retries subject to the execution budget.
 
 ## 7. Execution sequence
 ```mermaid
