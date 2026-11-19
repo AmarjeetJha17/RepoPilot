@@ -1,9 +1,11 @@
 """Provider-neutral, typed tool argument definitions and JSON Schema export."""
 
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 
 from pydantic import BaseModel
+
+from repopilot.security.capabilities import Capability
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +16,9 @@ class ToolDefinition:
     description: str
     arguments_model: type[BaseModel]
     schema_version: int = 1
+    capabilities: frozenset[Capability] = frozenset()
+    resource_fields: tuple[str, ...] = ()
+    resource_type: Literal["file", "directory"] = "file"
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
@@ -30,6 +35,23 @@ class ToolDefinition:
             or self.schema_version < 1
         ):
             raise ValueError("Tool schema version must be a positive integer.")
+        if not isinstance(self.capabilities, frozenset) or any(
+            not isinstance(capability, Capability) for capability in self.capabilities
+        ):
+            raise TypeError("Tool capabilities must be a frozenset of known Capability values.")
+        if (
+            not isinstance(self.resource_fields, tuple)
+            or any(
+                not isinstance(field, str)
+                or not field
+                or field not in self.arguments_model.model_fields
+                for field in self.resource_fields
+            )
+            or len(set(self.resource_fields)) != len(self.resource_fields)
+        ):
+            raise ValueError("Tool resource fields must be unique argument model fields.")
+        if self.resource_type not in {"file", "directory"}:
+            raise ValueError("Tool resource type must be 'file' or 'directory'.")
         self.provider_schema()
 
     def provider_schema(self) -> dict[str, object]:

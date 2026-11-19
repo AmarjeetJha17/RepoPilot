@@ -66,7 +66,9 @@ flowchart TD
 - `context`: file discovery, filtering, symbol index, bounded search, prompt assembly.
 - `tools`: explicit typed definitions, ordered registry, and argument validation; validation is a
   contract boundary and does not execute handlers or grant access.
-- `security`: path authorization, tool permissions, redaction, sandbox restrictions.
+- `security`: deterministic capability decisions, scoped path checks, exact-action approval request
+  contracts, redaction, and sandbox restrictions. Policy results are decisions, not executable
+  tokens; the future execution layer must revalidate paths and enforce the result.
 - `sandbox`: disposable checkout/worktree plus container lifecycle and quotas.
 - `persistence`: transaction repositories and schema migrations.
 - `evaluation`: task manifests, scoring, independent tests, aggregations.
