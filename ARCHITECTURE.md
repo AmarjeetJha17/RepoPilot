@@ -64,7 +64,8 @@ flowchart TD
   with correlated call IDs and rejects reasoning/continuation items the neutral response contract
   cannot represent.
 - `context`: file discovery, filtering, symbol index, bounded search, prompt assembly.
-- `tools`: typed read, search, patch, git and verification interfaces.
+- `tools`: explicit typed definitions, ordered registry, and argument validation; validation is a
+  contract boundary and does not execute handlers or grant access.
 - `security`: path authorization, tool permissions, redaction, sandbox restrictions.
 - `sandbox`: disposable checkout/worktree plus container lifecycle and quotas.
 - `persistence`: transaction repositories and schema migrations.

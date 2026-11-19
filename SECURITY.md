@@ -77,6 +77,7 @@ Rootless Docker offers defense in depth but does not eliminate kernel or contain
 - Mark repository content/tool output as quoted or delimited untrusted context.
 - Model cannot grant itself additional tools or approve commands via natural language.
 - Every proposed call is parsed against a strict tool-specific schema and authorized by deterministic code.
+- `ToolRegistry` performs name and argument-schema validation only. Authorization remains with `PolicyEngine`, human approval remains separate, and this registry does not dispatch or execute tools.
 - Use explicit tool allowlists, no unrestricted `sh -c` or arbitrary shell command on the host.
 - Add adversarial fixtures in tests: malicious README, terminal color codes, encoded instructions, symlinked `.env`, misleading test logs.
 
