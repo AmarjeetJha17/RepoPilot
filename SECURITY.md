@@ -102,6 +102,8 @@ Rootless Docker offers defense in depth but does not eliminate kernel or contain
 - `ToolRegistry` performs name and argument-schema validation only. Authorization remains with `PolicyEngine`, human approval remains separate, and this registry does not dispatch or execute tools.
 - `AgentOrchestrator` validates each proposed call and evaluates policy for each valid call; `ALLOW` records an authorized proposal only. It does not dispatch tools, create `ToolResult` values, or treat model output as approval.
 - The current orchestration cycle is limited to one provider request and does not preserve OpenAI reasoning continuation state. Unsupported continuation remains an explicit provider error; do not simulate it by dropping opaque state.
+- Runtime events are bounded in memory and contain typed metadata only; prompts, response bodies, tool arguments, and file contents are excluded. Dropped events are counted in the run result.
+- Cancellation propagates without retry and returns a content-minimized `CANCELLED` run snapshot when the run has started. This loop creates no background tasks, subprocesses, containers, or filesystem changes and makes no cleanup or rollback guarantee for future execution systems.
 - Use explicit tool allowlists, no unrestricted `sh -c` or arbitrary shell command on the host.
 - Add adversarial fixtures in tests: malicious README, terminal color codes, encoded instructions, symlinked `.env`, misleading test logs.
 

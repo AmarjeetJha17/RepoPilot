@@ -19,6 +19,7 @@ from repopilot.tools import ToolDefinition, ToolRegistry
 
 RUN_ID = UUID("222577c1-26a3-40b1-9058-1116a1a13ab1")
 MODEL = ModelIdentifier("mock", "security-test")
+MODEL_WRITE_PAYLOAD = "MODEL_WRITE_PAYLOAD_SECRET"
 
 
 class WriteArguments(BaseModel):
@@ -29,7 +30,9 @@ class WriteArguments(BaseModel):
 def test_authorized_write_proposal_never_changes_workspace(tmp_path: Path) -> None:
     target = tmp_path / "keep.txt"
     target.write_text("original", encoding="utf-8")
-    call = ToolCall("write-call", "write_file", {"path": "keep.txt", "content": "changed"})
+    call = ToolCall(
+        "write-call", "write_file", {"path": "keep.txt", "content": MODEL_WRITE_PAYLOAD}
+    )
     provider = MockModelProvider((ToolCallResponse(MODEL, (call,), FinishReason.TOOL_CALLS),))
     definition = ToolDefinition(
         "write_file",
@@ -62,3 +65,6 @@ def test_authorized_write_proposal_never_changes_workspace(tmp_path: Path) -> No
     assert result.proposal_decisions[0].outcome is ProposalOutcome.AUTHORIZED_NOT_EXECUTED
     assert target.read_text(encoding="utf-8") == "original"
     assert set(path.name for path in tmp_path.iterdir()) == {"keep.txt"}
+    assert "Propose a staged edit." not in repr(result.events)
+    assert MODEL_WRITE_PAYLOAD not in repr(result.events)
+    assert not hasattr(result, "tool_results")

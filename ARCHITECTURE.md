@@ -222,7 +222,21 @@ tool call remains untrusted and requires a separate policy decision; the provide
 not authorize execution.
 
 ## 10. Budget and failure handling
-Default proposed limits: max 30 model steps; max 3 repair attempts; max 15-minute wall clock; max 60-second individual command; max 1 MiB captured output per command (truncate sooner in prompts); configurable token and estimated USD caps. Users may lower limits; raising limits requires explicit configuration. Abort on invalid path, runaway tool call, sandbox failure, budget exhaustion, or cancellation.
+`BudgetConfig` defaults to 30 model requests, 3 repair attempts, a 15-minute run, and 8 tool-call
+proposals per response. The current orchestrator applies a stricter one-request ceiling. Its
+monotonic deadline bounds the provider timeout and prevents a request from starting after expiry.
+Proposal and repair counters are measured even when they cross their configured ceiling.
+
+Provider token counts are accounted only after a response, when reported. Optional reported-token
+ceilings stop processing that response if the known cumulative count is over the limit; they cannot
+prevent one request from exceeding the ceiling. Missing or partial usage remains unknown for the
+affected totals. No tokenizer estimate, provider price, or cost is fabricated. Hard pre-request
+token/cost enforcement requires a future trusted estimate and provider-side limit. Command runtime
+and output caps apply only when sandbox execution is implemented.
+
+Orchestration events remain in memory, contain metadata only, and are bounded by event-count and
+encoded-byte limits. A result reports how many events were dropped. No persistence or external
+telemetry is performed by the current loop.
 
 ## 11. Data flow and privacy
 - Input: user task + selected repository paths → filtered snippets → external model (unless locally hosted).

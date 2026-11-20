@@ -12,6 +12,7 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel
 
+from repopilot.agent.budget import BudgetConfig, BudgetReasonCode
 from repopilot.agent.contracts import ToolCall
 from repopilot.agent.loop import (
     AgentEventType,
@@ -34,6 +35,7 @@ from repopilot.providers.base import (
     ProviderTimeoutError,
     ProviderUnavailableError,
     TextResponse,
+    TokenUsage,
     ToolCallResponse,
 )
 from repopilot.providers.mock import MockModelProvider
@@ -116,8 +118,8 @@ def _setup(
     return orchestrator, config, provider, registry
 
 
-def _text(text: str = "Synthetic response.") -> TextResponse:
-    return TextResponse(MODEL, text, FinishReason.STOP)
+def _text(text: str = "Synthetic response.", usage: TokenUsage | None = None) -> TextResponse:
+    return TextResponse(MODEL, text, FinishReason.STOP, usage)
 
 
 def _tool_response(*calls: ToolCall) -> ToolCallResponse:
@@ -159,6 +161,9 @@ def test_text_response_is_bounded_and_never_claims_verification(tmp_path: Path) 
     assert result.run.verified is False
     assert result.run.verification_evidence is None
     assert result.response_summary == "Text response received (24 chars; stop)."
+    assert result.budget_snapshot.usage.input_tokens is None
+    assert result.budget_snapshot.usage.output_tokens is None
+    assert result.budget_snapshot.usage.missing_reports == 1
     assert "private response content" not in repr(result)
     assert "Task text" not in repr(result.events)
     assert provider.invocation_count == 1
@@ -318,6 +323,41 @@ def test_request_deadline_bounds_provider_that_ignores_request_timeout(tmp_path:
     assert result.run.status is RunStatus.FAILED
 
 
+def test_run_deadline_timeout_is_distinct_from_provider_timeout(tmp_path: Path) -> None:
+    async def hang(_request: ModelRequest) -> ModelResponse:
+        await asyncio.Event().wait()
+        return _text()
+
+    orchestrator, config, _, _ = _setup(
+        tmp_path,
+        hang,
+        request_timeout_seconds=10,
+        run_timeout_seconds=0.01,
+    )
+
+    result = asyncio.run(orchestrator.run(config))
+
+    assert result.outcome is OrchestrationOutcome.LIMIT_EXCEEDED
+    assert result.run.status is RunStatus.PARTIAL
+    assert result.error_code is OrchestrationErrorCode.RUN_DEADLINE_EXCEEDED
+    assert result.budget_reason_code is BudgetReasonCode.RUN_DEADLINE_EXCEEDED
+
+
+def test_early_provider_timeout_is_not_misreported_as_run_deadline(tmp_path: Path) -> None:
+    orchestrator, config, _, _ = _setup(
+        tmp_path,
+        ProviderTimeoutError(),
+        request_timeout_seconds=10,
+        run_timeout_seconds=1,
+    )
+
+    result = asyncio.run(orchestrator.run(config))
+
+    assert result.outcome is OrchestrationOutcome.PROVIDER_ERROR
+    assert result.run.status is RunStatus.FAILED
+    assert result.error_code is OrchestrationErrorCode.PROVIDER_TIMEOUT
+
+
 def test_zero_request_budget_exhausts_without_provider_call(tmp_path: Path) -> None:
     orchestrator, config, provider, _ = _setup(
         tmp_path,
@@ -373,33 +413,25 @@ def test_run_deadline_exhaustion_discards_late_response(tmp_path: Path) -> None:
 
 def test_task_cancellation_propagates_with_cancelled_run_snapshot(tmp_path: Path) -> None:
     async def check() -> None:
-        gate = asyncio.Event()
-        provider = MockModelProvider((_text(),), wait_before_response=gate)
-        registry = ToolRegistry()
-        context = AuthorizationContext(
-            str(RUN_ID),
-            tmp_path,
-            ExecutionWorkspace.SOURCE,
-            "baseline",
-            frozenset(),
-        )
-        orchestrator = AgentOrchestrator(
-            provider=provider,
-            registry=registry,
-            policy_engine=DefaultPolicyEngine(registry),
-            clock=lambda: NOW,
-        )
-        config = AgentLoopConfig(
-            "Task.", MODEL, RUN_ID, context, tmp_path, request_timeout_seconds=10
+        entered_provider = asyncio.Event()
+
+        async def wait_for_cancellation(_request: ModelRequest) -> ModelResponse:
+            entered_provider.set()
+            await asyncio.Event().wait()
+            return _text()
+
+        orchestrator, config, provider, _ = _setup(
+            tmp_path, wait_for_cancellation, request_timeout_seconds=10
         )
         task = asyncio.create_task(orchestrator.run(config))
-        await asyncio.sleep(0)
+        await entered_provider.wait()
         task.cancel()
 
         with pytest.raises(AgentRunCancelled) as cancelled:
             await task
         assert cancelled.value.result.outcome is OrchestrationOutcome.CANCELLED
         assert cancelled.value.result.run.status is RunStatus.CANCELLED
+        assert len(provider.requests) == 1
 
     asyncio.run(check())
 
@@ -483,3 +515,145 @@ def test_event_history_is_ordered_bounded_and_content_minimized(tmp_path: Path) 
     assert len(result.events) <= 2 * config.max_tool_calls_per_response + 8
     assert "do not copy this prompt" not in repr(result.events)
     assert all(not hasattr(event, "response_text") for event in result.events)
+
+
+def test_runtime_budget_caps_requests_even_when_reusable_defaults_are_higher(
+    tmp_path: Path,
+) -> None:
+    orchestrator, config, provider, _ = _setup(
+        tmp_path,
+        _text(),
+        budget_limits=BudgetConfig(max_model_requests=30),
+    )
+
+    result = asyncio.run(orchestrator.run(config))
+
+    assert result.model_requests == 1
+    assert result.budget_snapshot.limits.max_model_requests == 1
+    assert provider.requests[0].timeout_seconds <= config.request_timeout_seconds
+
+
+def test_runtime_budget_applies_configured_reported_usage_limit_before_handling_response(
+    tmp_path: Path,
+) -> None:
+    orchestrator, config, _, _ = _setup(
+        tmp_path,
+        _text("private response body", TokenUsage(3, 6)),
+        budget_limits=BudgetConfig(max_reported_output_tokens=5),
+    )
+
+    result = asyncio.run(orchestrator.run(config))
+
+    assert result.outcome is OrchestrationOutcome.LIMIT_EXCEEDED
+    assert result.run.status is RunStatus.PARTIAL
+    assert result.error_code is OrchestrationErrorCode.REPORTED_OUTPUT_TOKEN_LIMIT
+    assert result.budget_reason_code is BudgetReasonCode.REPORTED_OUTPUT_TOKENS
+    assert result.budget_snapshot.usage.output_tokens == 6
+    assert result.response_summary is None
+    assert "private response body" not in repr(result)
+
+
+def test_loop_stops_when_cumulative_proposal_budget_is_exceeded(tmp_path: Path) -> None:
+    response = _tool_response(_call("one", "a.py"), _call("two", "b.py"))
+    orchestrator, config, _, _ = _setup(
+        tmp_path,
+        response,
+        max_tool_calls_per_response=2,
+        budget_limits=BudgetConfig(max_total_tool_calls=1),
+    )
+
+    result = asyncio.run(orchestrator.run(config))
+
+    assert result.outcome is OrchestrationOutcome.LIMIT_EXCEEDED
+    assert result.run.status is RunStatus.PARTIAL
+    assert result.error_code is OrchestrationErrorCode.TOTAL_TOOL_CALL_LIMIT
+    assert result.budget_reason_code is BudgetReasonCode.TOTAL_TOOL_CALLS
+    assert result.budget_snapshot.tool_call_proposals == 2
+    assert result.proposal_decisions == ()
+
+
+def test_unknown_usage_remains_unknown_and_zero_usage_is_recorded(tmp_path: Path) -> None:
+    orchestrator, config, _, _ = _setup(tmp_path, _text(usage=TokenUsage(0, 0)))
+
+    result = asyncio.run(orchestrator.run(config))
+
+    assert result.budget_snapshot.usage.input_tokens == 0
+    assert result.budget_snapshot.usage.output_tokens == 0
+    assert result.budget_snapshot.usage.reports == 1
+
+
+def test_invalid_provider_usage_fails_safely_without_counting_it(tmp_path: Path) -> None:
+    orchestrator, config, _, _ = _setup(
+        tmp_path,
+        _text("private response body", TokenUsage(1 << 64, 0)),
+    )
+
+    result = asyncio.run(orchestrator.run(config))
+
+    assert result.outcome is OrchestrationOutcome.PROVIDER_ERROR
+    assert result.run.status is RunStatus.FAILED
+    assert result.error_code is OrchestrationErrorCode.INVALID_PROVIDER_RESPONSE
+    assert result.budget_snapshot.usage.reports == 0
+    assert "private response body" not in repr(result)
+
+
+def test_deadline_shortens_provider_timeout_and_prevents_late_start(tmp_path: Path) -> None:
+    now = [100.0, 100.75, 100.75]
+
+    def clock() -> float:
+        return now.pop(0) if now else 100.75
+
+    orchestrator, config, provider, _ = _setup(
+        tmp_path,
+        _text(),
+        monotonic=clock,
+        request_timeout_seconds=0.9,
+        run_timeout_seconds=1,
+    )
+
+    result = asyncio.run(orchestrator.run(config))
+
+    assert result.outcome is OrchestrationOutcome.TEXT_RESPONSE
+    assert provider.requests[0].timeout_seconds == pytest.approx(0.25)
+
+    now = [0.0, 1.0]
+    orchestrator, config, provider, _ = _setup(
+        tmp_path,
+        _text(),
+        monotonic=lambda: now.pop(0) if now else 1.0,
+        run_timeout_seconds=1,
+    )
+    result = asyncio.run(orchestrator.run(config))
+    assert result.error_code is OrchestrationErrorCode.RUN_DEADLINE_EXCEEDED
+    assert provider.requests == []
+
+
+def test_cancel_before_provider_start_propagates_with_zero_requests(tmp_path: Path) -> None:
+    async def check() -> None:
+        orchestrator, config, provider, _ = _setup(tmp_path, _text())
+        task = asyncio.create_task(orchestrator.run(config))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(AgentRunCancelled) as cancelled:
+            await task
+        assert cancelled.value.result.run.status is RunStatus.CANCELLED
+        assert cancelled.value.result.model_requests == 0
+        assert provider.requests == []
+
+    asyncio.run(check())
+
+
+def test_event_count_and_encoded_size_caps_report_dropped_events(tmp_path: Path) -> None:
+    orchestrator, config, _, _ = _setup(tmp_path, _text(), max_events=2)
+
+    result = asyncio.run(orchestrator.run(config))
+
+    assert len(result.events) == 2
+    assert result.events_dropped > 0
+    assert [event.sequence for event in result.events] == [1, 2]
+
+    orchestrator, config, _, _ = _setup(tmp_path, _text(), max_event_bytes=0)
+    result = asyncio.run(orchestrator.run(config))
+    assert result.events == ()
+    assert result.events_dropped > 0
+    assert result.event_bytes == 0

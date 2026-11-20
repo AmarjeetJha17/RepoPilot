@@ -95,6 +95,11 @@ erDiagram
 | `latency_ms` | int | |
 | `pricing_version` | text nullable | Basis of estimate |
 
+Runtime currently accounts provider-reported token usage in memory only. Missing or partial
+provider metadata remains unknown in the corresponding nullable fields. Any future estimated cost
+must identify an injected trusted pricing source/version and must remain labeled as an estimate;
+the current runtime does not calculate or persist costs.
+
 ### `eval_suites`
 `id` PK, `name`, `version`, `manifest_hash`, `created_at`, `description`.
 
