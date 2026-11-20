@@ -76,6 +76,35 @@ The OpenAI adapter has not been tested against a live API invocation.
 The project pins Python 3.12 in `.python-version`; `pyproject.toml` supports
 Python 3.12 and newer.
 
+## Offline agent demonstration
+
+Run the five-scenario, deterministic demonstration with:
+
+```bash
+uv run python scripts/demo_offline_agent.py
+```
+
+It creates a synthetic repository in a temporary directory and demonstrates an
+authorized read proposal, a denied host operation, a change requiring human
+approval, a text response, and a provider failure. The output contains run
+metadata and policy decisions only. It uses the mock provider, makes no network
+requests, and never executes proposed tools or modifies a user repository.
+The authorization outcomes are illustrative; no tool result or independent
+verification is produced.
+
+Example output:
+
+```text
+RepoPilot offline simulation (mock provider; proposed tools are never executed)
+
+Scenario: allowed_proposal
+  Status: PARTIAL
+  Termination reason: authorized_proposal_not_executed
+  Authorization: ALLOW (capability_allowed)
+  Tools executed: no
+  Independently verified: no
+```
+
 ## Continuous integration
 
 GitHub Actions runs the quality checks on pushes to `main`, pull requests
