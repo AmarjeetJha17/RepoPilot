@@ -49,6 +49,7 @@ Use temporary directories and synthetic repositories; never point tests at user 
 | Repo inspect read-only | compare file hashes and `git status` before/after |
 | Allowed path scope | traversal, symlink, case-sensitivity, UNC/device paths where applicable |
 | Bounded agent loop | fake model emits infinite tool calls; budget stops |
+| Single-decision orchestration | mock text/tool-call responses cover validation, policy outcomes, limits, cancellation and no dispatch |
 | Patch staging | invalid hash/overlap yields safe failure; live repo unchanged |
 | Approval binding | changed patch hash invalidates approval |
 | Sandbox tests | CPU/memory/PID timeout, no outbound network, no host secrets |

@@ -100,6 +100,8 @@ Rootless Docker offers defense in depth but does not eliminate kernel or contain
 - Model cannot grant itself additional tools or approve commands via natural language.
 - Every proposed call is parsed against a strict tool-specific schema and authorized by deterministic code.
 - `ToolRegistry` performs name and argument-schema validation only. Authorization remains with `PolicyEngine`, human approval remains separate, and this registry does not dispatch or execute tools.
+- `AgentOrchestrator` validates each proposed call and evaluates policy for each valid call; `ALLOW` records an authorized proposal only. It does not dispatch tools, create `ToolResult` values, or treat model output as approval.
+- The current orchestration cycle is limited to one provider request and does not preserve OpenAI reasoning continuation state. Unsupported continuation remains an explicit provider error; do not simulate it by dropping opaque state.
 - Use explicit tool allowlists, no unrestricted `sh -c` or arbitrary shell command on the host.
 - Add adversarial fixtures in tests: malicious README, terminal color codes, encoded instructions, symlinked `.env`, misleading test logs.
 

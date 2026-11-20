@@ -58,7 +58,9 @@ flowchart TD
 ## 4. Logical modules and responsibilities
 - `cli`: argument parsing, interactive confirmations, user display; no direct filesystem mutation.
 - `application`: use-case orchestration; creates run config, owns approval UX contract.
-- `agent`: state machine, step budgets, retry policy, tool dispatch; never bypasses policy.
+- `agent`: state machine, step budgets, retry policy, and policy-gated tool dispatch; never
+  bypasses policy. The current orchestrator supports one model decision per run, validates and
+  authorizes proposals, and records outcomes without dispatching tools.
 - `providers`: model I/O normalization and provider error classification; bounded retries belong
   to the agent runtime. The OpenAI Responses adapter translates text and function-call history
   with correlated call IDs and rejects reasoning/continuation items the neutral response contract
@@ -125,6 +127,9 @@ stateDiagram-v2
     INSPECTING --> FAILED: unrecoverable
     INSPECTING --> CANCELLED: user cancels
     PLANNING --> EXECUTING
+    PLANNING --> AWAITING_APPROVAL: exact action needs approval
+    PLANNING --> PARTIAL: response or authorized proposal awaits later work
+    PLANNING --> BLOCKED: invalid or denied proposal
     PLANNING --> FAILED: unrecoverable
     PLANNING --> CANCELLED: user cancels
     EXECUTING --> VERIFYING
@@ -150,6 +155,13 @@ Cancellation is allowed from `CREATED` and every active phase so a requested sto
 require inventing progress. Unrecoverable processing failures may end any processing or
 approval phase; failure to create a run does not produce a run record. These additions preserve
 the terminal-state rule and leave verification retries subject to the execution budget.
+
+The current `AgentOrchestrator` makes at most one provider request. Text responses terminate as
+`PARTIAL`; invalid or denied tool proposals terminate as `BLOCKED`; approval-required proposals
+remain `AWAITING_APPROVAL`; and policy-allowed proposals terminate as `PARTIAL` because they
+still await a future execution layer. An `ALLOW` is not execution, and this cycle creates neither
+tool results nor verification evidence. The OpenAI adapter's unsupported reasoning continuation
+remains rejected until the provider-neutral contract can preserve its continuation state.
 
 ## 7. Execution sequence
 ```mermaid

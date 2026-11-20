@@ -107,7 +107,14 @@ def test_new_run_starts_created_with_utc_timestamps_and_no_verification() -> Non
         ),
         (
             RunStatus.PLANNING,
-            {RunStatus.EXECUTING, RunStatus.FAILED, RunStatus.CANCELLED},
+            {
+                RunStatus.EXECUTING,
+                RunStatus.AWAITING_APPROVAL,
+                RunStatus.PARTIAL,
+                RunStatus.BLOCKED,
+                RunStatus.FAILED,
+                RunStatus.CANCELLED,
+            },
         ),
         (
             RunStatus.EXECUTING,
