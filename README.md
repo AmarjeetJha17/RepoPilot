@@ -64,10 +64,13 @@ combine text and tool calls because their ordering is not represented.
 ## Current status
 
 The initial CLI and read-only environment check, agent lifecycle contracts,
-mock provider, OpenAI Responses API adapter, and explicit typed tool registry
-with argument validation are implemented. Registry validation does not
-authorize or execute a call. Agent orchestration, concrete repository tools,
-sandboxing, persistence, and evaluation execution are not implemented yet.
+mock provider, OpenAI Responses API adapter, explicit typed tool registry,
+security policy engine, and a bounded single-decision orchestrator are
+implemented. The orchestrator validates and authorizes proposed calls but does
+not execute them. Concrete repository tools, sandboxing, persistence, and
+evaluation execution are not implemented yet. Unsupported OpenAI reasoning
+continuation remains rejected because the provider-neutral contract cannot
+preserve its opaque state.
 The OpenAI adapter has not been tested against a live API invocation.
 
 The project pins Python 3.12 in `.python-version`; `pyproject.toml` supports
