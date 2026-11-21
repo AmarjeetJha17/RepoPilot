@@ -73,6 +73,30 @@ synthetic test fixtures. These checks are not race-free and do not perform files
 Any future read/write tool must revalidate the actual target immediately before use with suitable
 filesystem-level protections; policy decisions alone do not secure execution.
 
+The Phase 4.1 `WorkspaceManager` is a separate trusted application component. It opens each source
+path component relative to directory descriptors with `O_NOFOLLOW` and reads source files with
+`O_NOATIME`. It copies only regular files into a random mode-restricted temporary directory
+outside the source and never invokes Git, a shell,
+model, network, or tool handler. It excludes `.git`, environment files, common credential/key
+names, databases, logs, caches, virtual environments, build output, known binary formats, and files
+containing NUL bytes or matching a small set of common embedded credential patterns. Content
+matching is best-effort and is not proof that staged files contain no secrets. It rejects
+symlinks/reparse points, hard-linked files, special files, paths
+with case-insensitive collisions or Windows-invalid components, cross-device entries, and Linux
+mount points found below the selected root. File count, per-file bytes, total bytes, and directory
+depth are bounded. Staging files and directories are created with owner-only permissions where
+the POSIX platform supports them.
+
+This implementation requires Linux descriptor-relative filesystem operations and fails closed on
+native Windows and macOS; use WSL2 for workspace preparation on Windows. On Linux it checks mount information
+before and after copying and rejects mounts under the source root. Descriptor-relative no-follow
+operations and before/after metadata checks reduce path races, but cannot make a concurrently
+modified tree race-free against another process running as the same OS user. A same-device mount
+created and removed during the scan may not be observable. Cleanup is pinned to descriptors and
+the recorded directory identity; if the owned directory path was replaced, cleanup fails and does
+not follow or delete the replacement. The manifest verifies staged content integrity only, not
+source integrity or software correctness. Cleanup failures are surfaced to the caller.
+
 ## 5. Sandbox baseline
 A **reference Docker runner** must:
 - Use disposable workspace mounted only where required; avoid exposing developer repository, host home and daemon socket.

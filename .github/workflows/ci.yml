@@ -38,6 +38,12 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --frozen
 
+      - name: Workspace security tests (Linux)
+        run: uv run --no-sync pytest tests/security/test_workspace_security.py -q
+
+      - name: Workspace integration tests (Linux)
+        run: uv run --no-sync pytest tests/integration/test_workspace_manager.py -q
+
       - name: Lint
         run: uv run --no-sync ruff check .
 

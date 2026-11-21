@@ -65,13 +65,23 @@ combine text and tool calls because their ordering is not represented.
 
 The initial CLI and read-only environment check, agent lifecycle contracts,
 mock provider, OpenAI Responses API adapter, explicit typed tool registry,
-security policy engine, and a bounded single-decision orchestrator are
-implemented. The orchestrator validates and authorizes proposed calls but does
-not execute them. Concrete repository tools, sandboxing, persistence, and
-evaluation execution are not implemented yet. Unsupported OpenAI reasoning
-continuation remains rejected because the provider-neutral contract cannot
-preserve its opaque state.
+security policy engine, bounded single-decision orchestrator, and Linux copy-based
+repository workspace preparation are implemented. The orchestrator validates
+and authorizes proposed calls but does not execute them. Workspace preparation
+does not run code or apply staged changes. Docker sandbox execution, concrete
+repository tools, persistence, and evaluation execution are not implemented yet.
+Native Windows and macOS workspace preparation fails closed; use Linux or WSL2. Unsupported OpenAI
+reasoning continuation remains rejected because the provider-neutral contract
+cannot preserve its opaque state.
 The OpenAI adapter has not been tested against a live API invocation.
+
+### Linux workspace checks from Windows
+
+Run the project from an Ubuntu WSL distribution, preferably from its Linux filesystem (for example,
+`~/src/RepoPilot`), then run `uv sync --frozen` and `uv run pytest -q`. Check that WSL is available
+separately with `wsl --status` in PowerShell and confirm the shell reports Linux with `uname -s`.
+Docker sandbox checks are a later milestone; if needed, verify Docker Desktop integration and daemon
+availability separately with `docker version`. RepoPilot does not install or configure WSL or Docker.
 
 The project pins Python 3.12 in `.python-version`; `pyproject.toml` supports
 Python 3.12 and newer.
@@ -111,8 +121,9 @@ GitHub Actions runs the quality checks on pushes to `main`, pull requests
 targeting `main`, and manual `workflow_dispatch` runs. The workflow uses Ubuntu
 and Python 3.12, installs dependencies from `uv.lock`, checks Ruff formatting
 and lint, runs mypy and pytest, measures coverage, validates the pre-commit
-configuration, and builds the package. When generated, `coverage.xml` is
-uploaded as a workflow artifact; no third-party coverage service is used.
+configuration, runs the workspace security target on Ubuntu, and builds the
+package. When generated, `coverage.xml` is uploaded as a workflow artifact; no
+third-party coverage service is used.
 
 Run the same checks locally after `uv sync`:
 

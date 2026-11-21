@@ -71,7 +71,8 @@ flowchart TD
 - `security`: deterministic capability decisions, scoped path checks, exact-action approval request
   contracts, redaction, and sandbox restrictions. Policy results are decisions, not executable
   tokens; the future execution layer must revalidate paths and enforce the result.
-- `sandbox`: disposable checkout/worktree plus container lifecycle and quotas.
+- `sandbox`: copy-based repository workspace preparation, integrity checks, and later container
+  lifecycle and quotas. The initial `workspace` manager does not execute code or tools.
 - `persistence`: transaction repositories and schema migrations.
 - `evaluation`: task manifests, scoring, independent tests, aggregations.
 - `observability`: audit events, logging, trace spans, usage accounting.
@@ -202,6 +203,15 @@ sequenceDiagram
 - **Sandbox container:** executes bounded commands on staging, never receives provider credentials, SSH agent, host home mount, DB, or Docker socket.
 - **Model provider:** external data recipient if cloud-hosted; send only relevant snippets and redact secrets where feasible.
 - **Approvals:** from terminal user only; text inside repo cannot authorize actions.
+
+The initial workspace manager (Phase 4, Step 4.1) makes a bounded copy into a random, private
+temporary directory outside the selected source tree. It copies regular eligible files only,
+excludes sensitive paths and generated directories, rejects symlinks and special files, and records
+a sorted SHA-256 baseline without absolute paths or contents. Integrity reports compare the staged
+tree with that baseline; they are not software correctness evidence. Linux descriptor-relative
+operations with `O_NOFOLLOW` and `O_NOATIME` are required, so native Windows and macOS preparation
+fail closed; use Linux or WSL2. No files are applied back to the source repository, and no code is
+executed.
 
 Detailed threat model: [SECURITY.md](SECURITY.md).
 
