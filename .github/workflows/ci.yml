@@ -44,6 +44,12 @@ jobs:
       - name: Workspace integration tests (Linux)
         run: uv run --no-sync pytest tests/integration/test_workspace_manager.py -q
 
+      - name: Repository intelligence security tests (Linux)
+        run: uv run --no-sync pytest tests/security/test_repository_intelligence.py -q
+
+      - name: Repository intelligence integration tests (Linux)
+        run: uv run --no-sync pytest tests/integration/test_repository_intelligence.py -q
+
       - name: Lint
         run: uv run --no-sync ruff check .
 

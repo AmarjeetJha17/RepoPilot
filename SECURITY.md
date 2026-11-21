@@ -144,14 +144,39 @@ Rootless Docker offers defense in depth but does not eliminate kernel or contain
 ## 9. Security verification
 Required security tests: path traversal, symlink escape, absolute path, race revalidation, dangerous commands, command argument injection, output poisoning, prompt injection, sandbox network disabled, no Docker socket, timeout/OOM, redaction, approval replay and approval scope mismatch. All security blocking tests must pass before releasing a write-capable version.
 
-## 10. Vulnerability reporting
+## 10. Read-only repository intelligence
+
+`RepositoryIntelligence` accepts a `WorkspaceManager` and the exact active handle it owns, then
+obtains the manager's bounded read capability. It never authorizes arbitrary host paths or trusts a
+handle UUID alone. Discovery, text reads, literal search, AST indexing, and context selection only
+read the staged copy using descriptor-relative no-follow operations. Symlinks, special files,
+excluded sensitive paths, traversal, cleaned/foreign handles, and mount escapes fail closed or are
+omitted from inventory. Errors contain stable codes rather than host paths or file contents.
+
+Default limits are 20,000 traversal entries, 2,000 inventory files at depth 20, 1 MB input files,
+64 KB and 400 lines per returned text excerpt, 500 search files / 4 MB / 500 matches, 500 Python
+files / 8 MB / 50,000 AST nodes, and 64 KB total selected context. These limits bound the service,
+not the amount of information a human can read from the local repository through other means.
+
+Staging already applies sensitive path and common credential-pattern filters, but these are
+best-effort filters and cannot guarantee that all secrets are excluded. Callers must treat all
+returned content as untrusted repository data and must not log or transmit it by default. AST
+indexing parses syntax only; it does not import or execute inspected code, evaluate decorators or
+annotations, resolve symbols, or establish correctness. Descriptor-relative revalidation reduces
+TOCTOU risk; it is not a claim of full protection from a concurrent process running as the same OS
+user. Intelligence results are not authorization and are not registered as model-executable tools.
+Any later execution or write path must independently authorize and revalidate its target. Limits are
+defaults controlled by trusted application configuration; configured values must remain finite and
+bounded.
+
+## 11. Vulnerability reporting
 Until a dedicated private security channel exists, **do not post exploit details or credentials in public GitHub issues**. Maintainers should add GitHub private vulnerability reporting in repository Security settings and replace this section with verified private-report instructions before the first public release. Never invent a security email address.
 
-## 11. Incident response
+## 12. Incident response
 1. Stop the agent, revoke affected credentials externally, and stop related sandbox containers.
 2. Preserve redacted audit metadata and relevant hashes; do not publish compromised data.
 3. Reproduce in isolated fixture, classify affected versions and paths.
 4. Patch, add regression test, release advisory and rotate tokens as appropriate.
 
-## 12. Deployment note
+## 13. Deployment note
 **Do not interpret this document as proof that all controls are implemented.** Every control must be verified by tests; disable unsafe capabilities until controls exist. Security configuration drift is release-blocking.

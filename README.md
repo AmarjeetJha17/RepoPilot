@@ -66,20 +66,34 @@ combine text and tool calls because their ordering is not represented.
 The initial CLI and read-only environment check, agent lifecycle contracts,
 mock provider, OpenAI Responses API adapter, explicit typed tool registry,
 security policy engine, bounded single-decision orchestrator, and Linux copy-based
-repository workspace preparation are implemented. The orchestrator validates
-and authorizes proposed calls but does not execute them. Workspace preparation
-does not run code or apply staged changes. Docker sandbox execution, concrete
-repository tools, persistence, and evaluation execution are not implemented yet.
+repository workspace preparation are implemented. Phase 4.2 adds read-only,
+bounded repository discovery, UTF-8 excerpts, literal search, Python AST symbol
+indexing, and deterministic context selection over that staged copy. The
+orchestrator validates and authorizes proposed calls but does not execute them;
+repository intelligence is not registered as an executable model tool. Docker
+sandbox execution, concrete repository tools, persistence, and evaluation
+execution are not implemented yet.
 Native Windows and macOS workspace preparation fails closed; use Linux or WSL2. Unsupported OpenAI
 reasoning continuation remains rejected because the provider-neutral contract
 cannot preserve its opaque state.
 The OpenAI adapter has not been tested against a live API invocation.
 
+Repository-intelligence defaults cap discovery at 20,000 entries, 2,000 files,
+and depth 20; each input file at 1 MB; returned text at 64 KB and 400 lines;
+search at 500 files, 4 MB, and 500 matches; Python indexing at 500 files, 8 MB,
+and 50,000 AST nodes; and combined selected context at 64 KB. These operations
+read only an active workspace owned by its `WorkspaceManager`. Secret filtering
+is best-effort, and AST results are syntactic rather than semantic. Trusted
+application configuration can change these defaults but must keep them bounded.
+
 ### Linux workspace checks from Windows
 
 Run the project from an Ubuntu WSL distribution, preferably from its Linux filesystem (for example,
-`~/src/RepoPilot`), then run `uv sync --frozen` and `uv run pytest -q`. Check that WSL is available
-separately with `wsl --status` in PowerShell and confirm the shell reports Linux with `uname -s`.
+`~/src/RepoPilot`), then run `uv sync --frozen`, `uv run pytest -q`, and
+`uv run pytest tests/security/test_repository_intelligence.py -q`. Workspace and repository
+intelligence tests are Linux-only; native Windows skips do not verify those boundaries. Check that
+WSL is available separately with `wsl --status` in PowerShell and confirm the shell reports Linux
+with `uname -s`.
 Docker sandbox checks are a later milestone; if needed, verify Docker Desktop integration and daemon
 availability separately with `docker version`. RepoPilot does not install or configure WSL or Docker.
 
@@ -121,9 +135,9 @@ GitHub Actions runs the quality checks on pushes to `main`, pull requests
 targeting `main`, and manual `workflow_dispatch` runs. The workflow uses Ubuntu
 and Python 3.12, installs dependencies from `uv.lock`, checks Ruff formatting
 and lint, runs mypy and pytest, measures coverage, validates the pre-commit
-configuration, runs the workspace security target on Ubuntu, and builds the
-package. When generated, `coverage.xml` is uploaded as a workflow artifact; no
-third-party coverage service is used.
+configuration, runs workspace and repository-intelligence integration/security
+targets on Ubuntu, and builds the package. When generated, `coverage.xml` is
+uploaded as a workflow artifact; no third-party coverage service is used.
 
 Run the same checks locally after `uv sync`:
 

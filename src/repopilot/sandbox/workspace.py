@@ -14,9 +14,13 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from fnmatch import fnmatchcase
 from pathlib import Path, PureWindowsPath
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from repopilot.security.paths import DEFAULT_SENSITIVE_PATTERNS
+
+if TYPE_CHECKING:
+    from repopilot.sandbox.read_access import WorkspaceReadAccess
 
 _CHUNK_SIZE = 64 * 1024
 _SECRET_CONTENT_PATTERNS = (
@@ -505,6 +509,19 @@ class WorkspaceManager:
         """Return the manager's recorded lifecycle state for its exact handle."""
         return self._owned(handle).cleanup_state
 
+    def read_access(self, handle: WorkspaceHandle) -> WorkspaceReadAccess:
+        """Issue bounded read-only access only for this manager's active workspace."""
+        if not _SECURE_DESCRIPTOR_IO:
+            raise WorkspaceError(WorkspaceErrorCode.PLATFORM_UNSUPPORTED)
+        owned = self._owned(handle)
+        if owned.cleanup_state is not WorkspaceCleanupState.ACTIVE or not _root_name_matches(owned):
+            raise WorkspaceError(WorkspaceErrorCode.OWNERSHIP_MISMATCH)
+        if _mount_points_under(handle.staging_root, _read_mount_points()):
+            raise WorkspaceError(WorkspaceErrorCode.UNSUPPORTED_ENTRY)
+        from repopilot.sandbox.read_access import WorkspaceReadAccess
+
+        return WorkspaceReadAccess(self, handle)
+
     def close(self) -> None:
         """Clean every manager-owned workspace and report failures after trying all."""
         if self._closed:
@@ -525,7 +542,7 @@ class WorkspaceManager:
         if not isinstance(handle, WorkspaceHandle):
             raise WorkspaceError(WorkspaceErrorCode.OWNERSHIP_MISMATCH)
         owned = self._workspaces.get(handle.identity)
-        if owned is None or owned.handle != handle:
+        if owned is None or owned.handle is not handle:
             raise WorkspaceError(WorkspaceErrorCode.OWNERSHIP_MISMATCH)
         return owned
 
