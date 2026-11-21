@@ -1,5 +1,11 @@
 """Isolated workspace preparation and execution environment interfaces."""
 
+from repopilot.sandbox.read_access import (
+    WorkspaceBytes,
+    WorkspaceDirectoryListing,
+    WorkspaceEntry,
+    WorkspaceReadAccess,
+)
 from repopilot.sandbox.workspace import (
     BaselineFile,
     BaselineManifest,
@@ -23,6 +29,9 @@ __all__ = [
     "IntegrityChangeKind",
     "IntegrityReport",
     "WorkspaceCleanupState",
+    "WorkspaceBytes",
+    "WorkspaceDirectoryListing",
+    "WorkspaceEntry",
     "WorkspaceError",
     "WorkspaceErrorCode",
     "WorkspaceHandle",
@@ -30,4 +39,5 @@ __all__ = [
     "WorkspaceLimits",
     "WorkspaceManager",
     "WorkspacePreparationStatus",
+    "WorkspaceReadAccess",
 ]

@@ -40,6 +40,14 @@ and the no-network/no-subprocess boundary execute on Ubuntu; the full suite also
 integrity tests. Native Windows and macOS workspace preparation is expected to fail closed until
 secure no-follow, no-atime descriptor implementations are available.
 
+Repository-intelligence parsing/value tests are portable and live in `tests/unit/`. Its integration
+and filesystem-boundary tests use synthetic staged repositories and run only on Linux; CI invokes
+`tests/integration/test_repository_intelligence.py` and
+`tests/security/test_repository_intelligence.py` explicitly on Ubuntu so Linux security checks are
+not silently treated as verified by Windows skips. Tests must assert that source fixtures stay
+unchanged, malformed/binary inputs return safe results, and diagnostics disclose neither host
+paths nor file contents.
+
 ## 4. Test conventions
 - Use **pytest** fixtures, parametrization, and named assertions.
 - Test behavior, errors, and state invariants—not implementation-specific prompt wording.
@@ -125,6 +133,7 @@ uv run ruff format --check .
 uv run mypy src/repopilot
 uv run pytest tests/unit tests/contract tests/integration tests/security -q
 uv run pytest --cov=repopilot --cov-report=term-missing
+uv run pytest tests/security -q
 ```
 
 ## 10. Release gates

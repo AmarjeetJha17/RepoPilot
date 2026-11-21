@@ -65,7 +65,9 @@ flowchart TD
   to the agent runtime. The OpenAI Responses adapter translates text and function-call history
   with correlated call IDs and rejects reasoning/continuation items the neutral response contract
   cannot represent.
-- `context`: file discovery, filtering, symbol index, bounded search, prompt assembly.
+- `context`: `RepositoryIntelligence` performs read-only bounded discovery, UTF-8 excerpts,
+  literal search, Python AST indexing, and deterministic context selection over a manager-issued
+  staged-workspace read capability. It does not call providers or grant tool execution.
 - `tools`: explicit typed definitions, ordered registry, and argument validation; validation is a
   contract boundary and does not execute handlers or grant access.
 - `security`: deterministic capability decisions, scoped path checks, exact-action approval request
@@ -102,7 +104,7 @@ repopilot/
 │   ├── application/{__init__.py,services.py}
 │   ├── agent/{__init__.py,loop.py,state.py,budget.py}
 │   ├── providers/{__init__.py,base.py,mock.py,adapters/}
-│   ├── context/{__init__.py,scanner.py,index.py,retrieval.py}
+│   ├── context/{__init__.py,intelligence.py,discovery.py,reader.py,search.py,symbols.py,models.py}
 │   ├── tools/{__init__.py,registry.py,read.py,patch.py,git.py,test.py}
 │   ├── security/{__init__.py,policy.py,paths.py,redaction.py}
 │   ├── sandbox/{__init__.py,runner.py,workspace.py}
@@ -212,6 +214,20 @@ tree with that baseline; they are not software correctness evidence. Linux descr
 operations with `O_NOFOLLOW` and `O_NOATIME` are required, so native Windows and macOS preparation
 fail closed; use Linux or WSL2. No files are applied back to the source repository, and no code is
 executed.
+
+Phase 4.2 adds a manager-validated read capability over the active staged copy. Discovery is capped
+at 20,000 entries, 2,000 returned files, and depth 20 by default. Reads are capped at 1 MB per file,
+64 KB returned, and 400 lines. Literal search is capped at 500 files, 4 MB, and 500 matches.
+Python indexing is capped at 500 files, 8 MB, and 50,000 AST nodes; selected context is capped at
+64 KB. These are service defaults and can be lowered by callers. Every operation uses relative
+paths and descriptor-relative no-follow reads; cleaned, forged, and foreign handles fail closed.
+Staged content remains untrusted input. Sensitive-name exclusions and the workspace's embedded
+secret-pattern scan are best-effort, not a guarantee that no secret reaches a future model. The AST
+index is syntactic only and does not resolve imports, evaluate decorators/annotations, or execute
+code. Descriptor checks reduce races but do not claim protection against every concurrent same-user
+filesystem mutation. Repository intelligence is not registered as a model-executable tool; the
+authorization and execution boundary remains a later step. Limits are defaults controlled by trusted
+application configuration; the configured values must remain finite and bounded.
 
 Detailed threat model: [SECURITY.md](SECURITY.md).
 
