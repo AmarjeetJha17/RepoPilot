@@ -34,6 +34,12 @@ benchmarks/
 ```
 Use temporary directories and synthetic repositories; never point tests at user workspaces. Every test that can run code must use a constrained sandbox fixture.
 
+Workspace-manager unit, integration, and security tests use synthetic temporary trees only. The
+Linux CI job runs `tests/security/test_workspace_security.py` explicitly so source-symlink rejection
+and the no-network/no-subprocess boundary execute on Ubuntu; the full suite also runs cleanup and
+integrity tests. Native Windows and macOS workspace preparation is expected to fail closed until
+secure no-follow, no-atime descriptor implementations are available.
+
 ## 4. Test conventions
 - Use **pytest** fixtures, parametrization, and named assertions.
 - Test behavior, errors, and state invariants—not implementation-specific prompt wording.
@@ -52,6 +58,7 @@ Use temporary directories and synthetic repositories; never point tests at user 
 | Single-decision orchestration | mock text/tool-call responses cover validation, policy outcomes, limits, cancellation and no dispatch |
 | Runtime budget accounting | fake monotonic clocks and synthetic provider usage cover hard count/time limits, unknown usage, and bounded event drops |
 | Patch staging | invalid hash/overlap yields safe failure; live repo unchanged |
+| Repository workspace | bounded copy, secret/cache exclusion, immutable baseline, staged integrity, owned cleanup, no source mutation |
 | Approval binding | changed patch hash invalidates approval |
 | Sandbox tests | CPU/memory/PID timeout, no outbound network, no host secrets |
 | Audit | every allow/deny/approval creates correlated event |
