@@ -38,7 +38,7 @@ def _dispatcher(
     allowed: frozenset[Capability] | None = None,
     sensitive: tuple[str, ...] = (),
     limits: ToolDispatchLimits | None = None,
-) -> tuple[WorkspaceManager, WorkspaceHandle, ReadOnlyToolDispatcher]:
+) -> tuple[Path, WorkspaceManager, WorkspaceHandle, ReadOnlyToolDispatcher]:
     source, _files = create_repository(tmp_path)
     staging = tmp_path / "staging"
     staging.mkdir()
@@ -66,7 +66,7 @@ def _dispatcher(
         intelligence=RepositoryIntelligence(manager, handle),
         limits=limits,
     )
-    return manager, handle, dispatcher
+    return source, manager, handle, dispatcher
 
 
 def test_all_four_tools_execute_and_return_real_bounded_payloads(tmp_path: Path) -> None:
@@ -110,7 +110,7 @@ def test_all_four_tools_execute_and_return_real_bounded_payloads(tmp_path: Path)
 
 
 def test_directory_discovery_applies_application_sensitive_patterns(tmp_path: Path) -> None:
-    manager, _handle, dispatcher = _dispatcher(tmp_path, sensitive=("**/first.py",))
+    _source, manager, _handle, dispatcher = _dispatcher(tmp_path, sensitive=("**/first.py",))
 
     result = dispatcher.dispatch(ToolCall("discover-2", "repo_discover_files", {"directory": "."}))
 
@@ -121,7 +121,7 @@ def test_directory_discovery_applies_application_sensitive_patterns(tmp_path: Pa
 
 
 def test_output_byte_limit_returns_failure_without_payload(tmp_path: Path) -> None:
-    manager, _handle, dispatcher = _dispatcher(
+    _source, manager, _handle, dispatcher = _dispatcher(
         tmp_path, limits=ToolDispatchLimits(max_output_bytes=64)
     )
 
@@ -136,7 +136,7 @@ def test_output_byte_limit_returns_failure_without_payload(tmp_path: Path) -> No
 
 
 def test_result_item_limit_truncates_discovery_deterministically(tmp_path: Path) -> None:
-    manager, _handle, dispatcher = _dispatcher(
+    _source, manager, _handle, dispatcher = _dispatcher(
         tmp_path, limits=ToolDispatchLimits(max_result_items=1)
     )
 
