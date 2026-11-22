@@ -29,6 +29,7 @@ from repopilot.sandbox.workspace import (
     WorkspaceErrorCode,
     WorkspaceHandle,
     WorkspaceManager,
+    workspace_identity_for_handle,
 )
 from repopilot.security.capabilities import Capability
 from repopilot.security.paths import (
@@ -651,11 +652,6 @@ class ReadOnlyToolDispatcher:
             payload_size_bytes,
             self._duration_ms(started),
         )
-
-
-def workspace_identity_for_handle(handle: WorkspaceHandle) -> str:
-    """Return the policy-context binding label; manager object identity remains authoritative."""
-    return f"workspace:{handle.identity.value}"
 
 
 def _safe_call_metadata(call: object) -> tuple[str | None, str | None]:

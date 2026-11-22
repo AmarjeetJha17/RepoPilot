@@ -54,6 +54,13 @@ targets on Ubuntu. Those tests must prove real staged reads on `ALLOW`, no handl
 denial/approval/cancellation, exact workspace ownership, path-scoped policy, bounded result bytes,
 and no provider/network/subprocess use. Native Windows skips do not verify workspace execution.
 
+Phase 4.4 patch-staging tests use synthetic repositories. Proposal-model tests are portable under
+`tests/unit/`; filesystem replacement integration and security tests live under their matching
+directories and are Linux-only. Ubuntu CI runs both patch-staging files explicitly so native
+Windows skips cannot count as verification. Tests assert source-tree immutability, exact staged
+hashes, policy denial, stale-hash rejection, symlink containment, bounded diff previews, and safe
+relative-path output. No replacement content is executed.
+
 ## 4. Test conventions
 - Use **pytest** fixtures, parametrization, and named assertions.
 - Test behavior, errors, and state invariants—not implementation-specific prompt wording.
@@ -71,7 +78,7 @@ and no provider/network/subprocess use. Native Windows skips do not verify works
 | Bounded agent loop | fake model emits infinite tool calls; budget stops |
 | Single-decision orchestration | mock text/tool-call responses cover validation, policy outcomes, limits, cancellation and no dispatch |
 | Runtime budget accounting | fake monotonic clocks and synthetic provider usage cover hard count/time limits, unknown usage, and bounded event drops |
-| Patch staging | invalid hash/overlap yields safe failure; live repo unchanged |
+| Patch staging | malformed/duplicate/oversized proposals, invalid hash, policy denial, and path escapes fail safely; replacements are atomic per file and the live/source repo remains unchanged |
 | Repository workspace | bounded copy, secret/cache exclusion, immutable baseline, staged integrity, owned cleanup, no source mutation |
 | Approval binding | changed patch hash invalidates approval |
 | Sandbox tests | CPU/memory/PID timeout, no outbound network, no host secrets |
