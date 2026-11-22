@@ -73,7 +73,7 @@ orchestrator validates and authorizes proposals but does not execute them. A
 separate, policy-enforced dispatcher can execute four bounded read-only repository
 tools when called by trusted application code; it is not connected to the
 orchestrator and never forwards results to a model provider. Write, Git-mutation,
-and sandbox-execution tools, persistence, and evaluation execution are not
+persistence, and evaluation execution are not
 implemented yet. Phase 4.4 adds a bounded safe patch proposal/staging API for
 existing UTF-8 files in an owned staging workspace. It does not apply patches to
 the source repository, execute replacement content, or connect patch staging to
@@ -81,7 +81,12 @@ the agent loop.
 Native Windows and macOS workspace preparation fails closed; use Linux or WSL2. Unsupported OpenAI
 reasoning continuation remains rejected because the provider-neutral contract
 cannot preserve its opaque state.
-The OpenAI adapter has not been tested against a live API invocation.
+The OpenAI adapter has not been tested against a live API invocation. Phase 4.5 adds a policy-gated
+Docker runner for fixed Python syntax and pytest checks. It is not connected to the agent loop or
+CLI. The concrete Docker backend requires Linux, a local isolated daemon, and an operator-provided
+digest-pinned image that already contains the required dependencies; the backend also requires a
+rootless daemon socket owned by the staging user. Real Docker isolation has not
+been verified by fake-backend tests.
 
 Repository-intelligence defaults cap discovery at 20,000 entries, 2,000 files,
 and depth 20; each input file at 1 MB; returned text at 64 KB and 400 lines;
@@ -102,8 +107,11 @@ Run the project from an Ubuntu WSL distribution, preferably from its Linux files
 intelligence tests are Linux-only; native Windows skips do not verify those boundaries. Check that
 WSL is available separately with `wsl --status` in PowerShell and confirm the shell reports Linux
 with `uname -s`.
-Docker sandbox checks are a later milestone; if needed, verify Docker Desktop integration and daemon
-availability separately with `docker version`. RepoPilot does not install or configure WSL or Docker.
+To exercise the concrete sandbox backend, use Linux (or WSL2 with Docker Desktop integration
+verified separately) and configure an already available digest-pinned image. RepoPilot does not
+install or configure WSL or Docker. Rootless/user-namespace isolation and image contents must be
+verified independently; regular CI runner tests use a fake backend and do not claim real Docker
+isolation.
 
 The project pins Python 3.12 in `.python-version`; `pyproject.toml` supports
 Python 3.12 and newer.

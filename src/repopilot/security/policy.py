@@ -162,6 +162,7 @@ _PATH_SCOPED = frozenset(
         Capability.REPOSITORY_SEARCH,
         Capability.STAGED_FILE_MODIFICATION,
         Capability.LIVE_REPOSITORY_MODIFICATION,
+        Capability.SANDBOXED_TEST_EXECUTION,
     }
 )
 _LIVE = Capability.LIVE_REPOSITORY_MODIFICATION
@@ -410,7 +411,7 @@ def _resource_scopes(
     if not fields:
         raise ValueError("Resource-scoped capability has no declared resource fields.")
     allow_missing = capability in {_STAGED, _LIVE}
-    forbid_symlinks = capability in {_STAGED, _LIVE}
+    forbid_symlinks = capability in {_STAGED, _LIVE, _SANDBOXED_TEST}
     scopes: list[str] = []
     for field_name in fields:
         value = getattr(arguments, field_name)

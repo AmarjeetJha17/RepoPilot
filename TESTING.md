@@ -61,6 +61,15 @@ Windows skips cannot count as verification. Tests assert source-tree immutabilit
 hashes, policy denial, stale-hash rejection, symlink containment, bounded diff previews, and safe
 relative-path output. No replacement content is executed.
 
+Phase 4.5 runner contract/security tests use a deterministic fake backend and synthetic
+manager-owned staging workspaces. Ubuntu CI runs these files explicitly so Linux-only workspace
+tests cannot silently skip. They verify fixed command construction, policy denial, exact workspace
+ownership, output/runtime bounds, cancellation and owned-container cleanup without requiring
+Docker. Real Docker isolation remains a separate manually provisioned verification: use a
+digest-pinned image already containing Python and pytest and a local rootless Linux daemon, then
+verify no network, source/host/credential mounts, resource limits, timeout termination,
+and cleanup. A fake backend is not evidence that Docker or kernel isolation works.
+
 ## 4. Test conventions
 - Use **pytest** fixtures, parametrization, and named assertions.
 - Test behavior, errors, and state invariants—not implementation-specific prompt wording.

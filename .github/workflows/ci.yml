@@ -62,6 +62,12 @@ jobs:
       - name: Patch staging integration tests (Linux)
         run: uv run --no-sync pytest tests/integration/test_patch_staging.py -q
 
+      - name: Docker sandbox runner security tests (Linux)
+        run: uv run --no-sync pytest tests/security/test_docker_sandbox.py -q
+
+      - name: Docker sandbox runner integration tests (Linux)
+        run: uv run --no-sync pytest tests/integration/test_docker_sandbox.py -q
+
       - name: Lint
         run: uv run --no-sync ruff check .
 

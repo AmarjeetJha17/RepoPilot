@@ -76,8 +76,8 @@ filesystem-level protections; policy decisions alone do not secure execution.
 The Phase 4.1 `WorkspaceManager` is a separate trusted application component. It opens each source
 path component relative to directory descriptors with `O_NOFOLLOW` and reads source files with
 `O_NOATIME`. It copies only regular files into a random mode-restricted temporary directory
-outside the source and never invokes Git, a shell,
-model, network, or tool handler. It excludes `.git`, environment files, common credential/key
+outside the source and never invokes Git, a shell, model, network, or tool handler during workspace
+preparation. It excludes `.git`, environment files, common credential/key
 names, databases, logs, caches, virtual environments, build output, known binary formats, and files
 containing NUL bytes or matching a small set of common embedded credential patterns. Content
 matching is best-effort and is not proof that staged files contain no secrets. It rejects
@@ -125,6 +125,39 @@ A **reference Docker runner** must:
 - Cleanup containers, mounts and temporary files in `finally` even after cancellation.
 
 Rootless Docker offers defense in depth but does not eliminate kernel or container-runtime vulnerabilities. Treat untrusted execution as potentially dangerous; do not run it against sensitive repositories on highly privileged machines without further isolation. Reference: https://docs.docker.com/engine/security/rootless/.
+
+### Phase 4.5 implemented boundary
+
+The current runner accepts only the `python-syntax` and `pytest` command enums and bounded,
+normalized paths to existing baseline files. It constructs argv internally, disables pytest plugin
+autoload and its cache provider, and does not accept arbitrary pytest flags or shell text. Execution
+requires an application authorization context for `SANDBOXED_TEST_EXECUTION` scoped to the exact
+staging workspace. Policy authorization is separate from command execution; a valid schema alone
+does not authorize or run anything. Staging integrity is checked before container creation and
+again before container start. Changed baseline files are allowed, while unexpected, deleted,
+symlinked, or structurally changed entries fail closed.
+
+The Docker backend uses an explicitly configured `name@sha256:<digest>` image, never pulls it, and
+requires the local default context to resolve to a Unix socket owned by the same non-root user as
+the staging directory, plus a rootless daemon. In rootless mode the container runs as namespace
+UID 0, which maps to that unprivileged host account; all capabilities are dropped and no-new-privileges
+is enabled. Rootful user-namespace remapping is currently refused because owner-only staging-file
+access has not been safely mapped for it. The backend applies `--network=none`, read-only root and
+recursive staging mounts, bounded memory/CPU/PIDs/tmpfs/runtime/output, and relies on the engine's
+default seccomp profile. The container receives only fixed environment values. Docker
+configuration and the daemon remain trusted host infrastructure; no daemon socket or host
+credentials are mounted into the container. The target image must already include Python and pytest
+dependencies; no install or network fetch occurs at run time. If required isolation is absent, the
+backend refuses execution. There is no default image digest, so an operator must provision and
+review a suitable immutable image before the concrete backend can run.
+
+The runner revalidates the manager-owned staging tree immediately before creating and starting a
+container. Docker bind mounts are resolved by pathname, so a same-user process may still race path
+replacement between the final check and Engine resolution; this implementation does not claim
+complete same-user adversarial race protection. A timeout or cancellation attempts to stop the
+attached Docker client and force-remove only the container ID returned by its own create request.
+Cleanup failures are reported distinctly. The fake backend tests prove runner policy, bounds, and
+cleanup behavior, not the behavior of a real Docker daemon or kernel isolation.
 
 ## 6. Secrets and providers
 - Secrets supplied by environment or OS credential store; never committed, pasted in config files, DB, logs, audit records, bug reports or traces.
