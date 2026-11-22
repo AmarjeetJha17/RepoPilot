@@ -89,6 +89,7 @@ def test_changed_source_file_invalidates_approval_before_confirmation(tmp_path: 
         assert confirmer.calls == 0
         assert (source / "module.py").read_text(encoding="utf-8") == "changed outside RepoPilot\n"
         assert ledger.audit_records[-1].reason is ApprovalReasonCode.REPOSITORY_CHANGED
+        assert ledger.audit_records[-1].receipt_id is None
         assert str(tmp_path) not in repr(ledger.audit_records)
         assert "changed outside RepoPilot" not in repr(ledger.audit_records)
     finally:
@@ -96,7 +97,7 @@ def test_changed_source_file_invalidates_approval_before_confirmation(tmp_path: 
 
 
 def test_source_symlink_substitution_fails_before_confirmation(tmp_path: Path) -> None:
-    source, manager, handle, confirmer, _, service, proposal, staged = _prepared(tmp_path)
+    source, manager, handle, confirmer, ledger, service, proposal, staged = _prepared(tmp_path)
     outside = tmp_path / "outside.py"
     outside.write_text("must stay unchanged\n", encoding="utf-8")
     try:
@@ -109,12 +110,18 @@ def test_source_symlink_substitution_fails_before_confirmation(tmp_path: Path) -
         assert approval.reason is ApprovalReasonCode.SCOPE_MISMATCH
         assert confirmer.calls == 0
         assert outside.read_text(encoding="utf-8") == "must stay unchanged\n"
+        assert ledger.audit_records[-1].receipt_id is None
+        assert ledger.audit_records[-1].reason is ApprovalReasonCode.SCOPE_MISMATCH
+        assert str(tmp_path) not in repr(ledger.audit_records)
+        assert "must stay unchanged" not in repr(ledger.audit_records)
+        assert str(tmp_path) not in repr(approval)
+        assert "must stay unchanged" not in repr(approval)
     finally:
         manager.cleanup(handle)
 
 
 def test_source_hardlink_substitution_fails_before_confirmation(tmp_path: Path) -> None:
-    source, manager, handle, confirmer, _, service, proposal, staged = _prepared(tmp_path)
+    source, manager, handle, confirmer, ledger, service, proposal, staged = _prepared(tmp_path)
     outside = tmp_path / "outside.py"
     outside.write_text("before\n", encoding="utf-8")
     try:
@@ -127,5 +134,6 @@ def test_source_hardlink_substitution_fails_before_confirmation(tmp_path: Path) 
         assert approval.reason is ApprovalReasonCode.SCOPE_MISMATCH
         assert confirmer.calls == 0
         assert outside.read_text(encoding="utf-8") == "before\n"
+        assert ledger.audit_records[-1].receipt_id is None
     finally:
         manager.cleanup(handle)

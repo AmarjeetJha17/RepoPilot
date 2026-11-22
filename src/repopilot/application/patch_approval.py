@@ -62,6 +62,7 @@ from repopilot.security.policy import (
     DefaultPolicyEngine,
     ExecutionWorkspace,
     PolicyDecision,
+    PolicyReasonCode,
 )
 from repopilot.tools.definition import ToolDefinition
 from repopilot.tools.errors import ToolRegistryError
@@ -335,6 +336,19 @@ class PatchApprovalService:
             self._authorization,
             self._handle.source_root,
         )
+        if decision.decision is PolicyDecision.DENY:
+            trusted_scope = (
+                decision.run_id == self._authorization.run_id
+                and decision.call_id == operation_id
+                and decision.capabilities == (Capability.LIVE_REPOSITORY_MODIFICATION,)
+                and decision.approval_request is None
+            )
+            reason = (
+                _approval_reason_for_policy_denial(decision.reason_code)
+                if trusted_scope
+                else ApprovalReasonCode.POLICY_DENIED
+            )
+            raise PatchApprovalError(reason)
         if (
             decision.decision is not PolicyDecision.REQUIRE_APPROVAL
             or decision.run_id != self._authorization.run_id
@@ -344,6 +358,25 @@ class PatchApprovalService:
             != self._authorization.workspace_identity
         ):
             raise PatchApprovalError(ApprovalReasonCode.POLICY_DENIED)
+
+
+_RESOURCE_SCOPE_POLICY_REASONS = frozenset(
+    {
+        PolicyReasonCode.INVALID_RESOURCE_PATH,
+        PolicyReasonCode.RESOURCE_OUTSIDE_WORKSPACE,
+        PolicyReasonCode.SENSITIVE_RESOURCE,
+        PolicyReasonCode.RESOURCE_TYPE_MISMATCH,
+        PolicyReasonCode.RESOURCE_NOT_FOUND,
+        PolicyReasonCode.SYMLINK_NOT_ALLOWED,
+    }
+)
+
+
+def _approval_reason_for_policy_denial(reason: PolicyReasonCode) -> ApprovalReasonCode:
+    """Preserve verified resource-scope denials without reclassifying policy failures."""
+    if reason in _RESOURCE_SCOPE_POLICY_REASONS:
+        return ApprovalReasonCode.SCOPE_MISMATCH
+    return ApprovalReasonCode.POLICY_DENIED
 
 
 class LivePatchApplicationService:

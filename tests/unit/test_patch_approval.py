@@ -8,7 +8,10 @@ from io import StringIO
 import pytest
 from rich.console import Console
 
-from repopilot.application.patch_approval import LivePatchApplicationService
+from repopilot.application.patch_approval import (
+    LivePatchApplicationService,
+    _approval_reason_for_policy_denial,
+)
 from repopilot.security.approval import (
     ApprovalConsumptionState,
     ApprovalLedger,
@@ -16,6 +19,7 @@ from repopilot.security.approval import (
     PatchManifestEntry,
     ReviewedPatchManifest,
 )
+from repopilot.security.policy import PolicyReasonCode
 from repopilot.ui.approval import RichTerminalApproval
 
 pytestmark = pytest.mark.unit
@@ -34,6 +38,36 @@ def _manifest() -> ReviewedPatchManifest:
         created_at=created,
         expires_at=created + timedelta(minutes=2),
     )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        PolicyReasonCode.INVALID_RESOURCE_PATH,
+        PolicyReasonCode.RESOURCE_OUTSIDE_WORKSPACE,
+        PolicyReasonCode.SENSITIVE_RESOURCE,
+        PolicyReasonCode.RESOURCE_TYPE_MISMATCH,
+        PolicyReasonCode.RESOURCE_NOT_FOUND,
+        PolicyReasonCode.SYMLINK_NOT_ALLOWED,
+    ],
+)
+def test_resource_path_denials_map_to_scope_mismatch(reason: PolicyReasonCode) -> None:
+    assert _approval_reason_for_policy_denial(reason) is ApprovalReasonCode.SCOPE_MISMATCH
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        PolicyReasonCode.CAPABILITY_NOT_ALLOWED,
+        PolicyReasonCode.CAPABILITY_EXPLICITLY_DENIED,
+        PolicyReasonCode.UNKNOWN_TOOL,
+        PolicyReasonCode.INVALID_VALIDATED_CALL,
+        PolicyReasonCode.RESOURCE_SCOPE_REQUIRED,
+        PolicyReasonCode.WORKSPACE_MISMATCH,
+    ],
+)
+def test_capability_and_other_policy_denials_stay_generic(reason: PolicyReasonCode) -> None:
+    assert _approval_reason_for_policy_denial(reason) is ApprovalReasonCode.POLICY_DENIED
 
 
 def test_terminal_confirmation_defaults_to_denial_when_noninteractive() -> None:

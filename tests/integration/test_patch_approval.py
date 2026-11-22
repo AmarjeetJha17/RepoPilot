@@ -27,7 +27,10 @@ from repopilot.security.approval import (
     TrustedApprovalDecision,
 )
 from repopilot.security.capabilities import Capability
-from repopilot.security.policy import AuthorizationContext, ExecutionWorkspace
+from repopilot.security.policy import (
+    AuthorizationContext,
+    ExecutionWorkspace,
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -131,7 +134,7 @@ def test_exact_patch_can_be_reviewed_but_source_remains_unchanged(tmp_path: Path
 
 
 def test_policy_denial_stops_before_confirmation(tmp_path: Path) -> None:
-    _, manager, handle, stager, confirmer, _, service, proposal = _system(
+    source, manager, handle, stager, confirmer, ledger, service, proposal = _system(
         tmp_path, live_allowed=False
     )
     try:
@@ -143,6 +146,41 @@ def test_policy_denial_stops_before_confirmation(tmp_path: Path) -> None:
         assert not approval.approved
         assert approval.reason is ApprovalReasonCode.POLICY_DENIED
         assert confirmer.calls == 0
+        assert ledger.audit_records[-1].reason is ApprovalReasonCode.POLICY_DENIED
+        assert ledger.audit_records[-1].receipt_id is None
+        assert (source / "module.py").read_text(encoding="utf-8") == "VALUE = 1\n"
+    finally:
+        manager.cleanup(handle)
+
+
+def test_forged_source_workspace_identity_fails_before_confirmation(tmp_path: Path) -> None:
+    source, manager, handle, stager, confirmer, ledger, _, proposal = _system(tmp_path)
+    forged_context = AuthorizationContext(
+        run_id="integration-run",
+        workspace_root=source,
+        workspace=ExecutionWorkspace.SOURCE,
+        workspace_identity=f"sha256:{'0' * 64}",
+        allowed_capabilities=frozenset({Capability.LIVE_REPOSITORY_MODIFICATION}),
+    )
+    forged_service = PatchApprovalService(
+        manager,
+        handle,
+        stager,
+        forged_context,
+        confirmer,
+        ledger,
+    )
+    try:
+        staged = stager.stage(proposal)
+        assert staged.status is PatchStagingStatus.STAGED
+
+        approval = forged_service.request_approval(proposal, staged, operation_id="operation-1")
+
+        assert not approval.approved
+        assert approval.reason is ApprovalReasonCode.SCOPE_MISMATCH
+        assert confirmer.calls == 0
+        assert ledger.audit_records[-1].receipt_id is None
+        assert (source / "module.py").read_text(encoding="utf-8") == "VALUE = 1\n"
     finally:
         manager.cleanup(handle)
 
