@@ -90,6 +90,15 @@ class PatchStager:
         self._reader: WorkspaceReadAccess = manager.read_access(handle)
         self._writer = manager.write_access(handle)
 
+    @property
+    def limits(self) -> PatchLimits:
+        """Return the trusted limits used for patch validation and staging."""
+        return self._limits
+
+    def is_bound_to(self, manager: WorkspaceManager, handle: WorkspaceHandle) -> bool:
+        """Check that this stager belongs to the exact manager-owned handle objects."""
+        return self._manager is manager and self._handle is handle
+
     def validate_proposal(self, proposal: PatchProposal) -> PatchValidationResult:
         """Check shape, trusted limits, baseline eligibility, and UTF-8 without writing."""
         try:

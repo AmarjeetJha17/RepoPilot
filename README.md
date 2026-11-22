@@ -88,6 +88,13 @@ digest-pinned image that already contains the required dependencies; the backend
 rootless daemon socket owned by the staging user. Real Docker isolation has not
 been verified by fake-backend tests.
 
+Phase 4.6 adds local exact-action patch review and a process-local one-time approval
+receipt. The approval preflight is Linux-only and read-only. Live patch application
+remains disabled: applying a valid receipt consumes it and reports that source
+mutation is unsupported. There is no CLI, agent-loop, or model-callable live-write
+path. The receipt ledger and audit metadata do not survive process exit and do not
+provide cross-process replay prevention.
+
 Repository-intelligence defaults cap discovery at 20,000 entries, 2,000 files,
 and depth 20; each input file at 1 MB; returned text at 64 KB and 400 lines;
 search at 500 files, 4 MB, and 500 matches; Python indexing at 500 files, 8 MB,
@@ -151,7 +158,8 @@ GitHub Actions runs the quality checks on pushes to `main`, pull requests
 targeting `main`, and manual `workflow_dispatch` runs. The workflow uses Ubuntu
 and Python 3.12, installs dependencies from `uv.lock`, checks Ruff formatting
 and lint, runs mypy and pytest, measures coverage, validates the pre-commit
-configuration, runs workspace and repository-intelligence integration/security
+configuration, runs workspace and repository-intelligence, patch-staging, and
+patch-approval integration/security
 targets on Ubuntu, and builds the package. When generated, `coverage.xml` is
 uploaded as a workflow artifact; no third-party coverage service is used.
 
