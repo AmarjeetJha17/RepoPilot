@@ -52,11 +52,36 @@ accidental mutation; it is not a security boundary against hostile Python code i
 so only trusted application code may construct and supply it.
 
 The live-write `ApprovalRequest` binds run and call IDs, canonical validated-argument digest,
-root-relative resource scope, workspace/baseline identity, and an expiry. The digest is a binding
-value, not authentication or evidence of consent. This milestone accepts no approval records and
-does not implement interactive approval, replay prevention, or durable approval storage. A future
-trusted application layer must supply and enforce user-originated, exact-action approval records;
-permanently denied capabilities cannot be escalated by approval.
+root-relative resource scope, workspace/baseline identity, and an expiry. Step 4.6 adds a separate
+local approval boundary. Its canonical manifest binds run and operation IDs, a source-root identity,
+the active staging workspace identity, sorted relative paths, expected source and replacement
+SHA-256 digests, complete diff digest, trusted limits, and creation/expiration times. The digest
+binds these fields; it is not authentication or evidence of human consent.
+
+Only a trusted local terminal confirmer can produce the affirmative decision accepted by the
+application service. The Rich adapter denies non-TTY input, defaults to no, refuses truncated
+previews, displays the full escaped diff and exact paths, and requires an explicit yes response.
+Model output, repository content, environment settings, and caller booleans do not authorize an
+operation. Policy continues to return REQUIRE_APPROVAL; approval does not alter capability policy.
+
+The receipt ledger is in-memory and instance-local. It atomically consumes a receipt at most once
+within that process, including failed or disabled apply attempts. Expired, copied/foreign, replayed,
+or manifest-changed receipts fail closed. The application coordinator retains receipts privately
+and returns only the manifest and approval outcome. Restarting the process loses the ledger and its audit
+records; it provides no cross-process or crash-safe replay protection. Audit entries contain only
+sanitized run/operation/receipt IDs, timestamps, status, safe reason codes, and a manifest digest
+when preflight produced one; they never contain paths or patch content.
+
+Approval preflight verifies the exact active manager-owned staging workspace, complete staged
+replacement summaries, no added/deleted files, full non-truncated diff, source-root identity,
+source hashes, path policy, sensitive/excluded names, regular-file type, single-link count, device
+boundary, UTF-8, and bounded file/total bytes. It uses Linux descriptor-relative no-follow reads
+and O_NOATIME. Any mismatch prevents confirmation. Native Windows and macOS fail closed. The
+source mutation service is deliberately disabled: a valid receipt is consumed and the call returns
+live_application_disabled without writing any source file. Thus no live-apply atomicity or
+partial-write behavior is claimed. Before any future enablement, the implementation must revalidate
+all files immediately before mutation, use safe same-directory atomic replacement, report exact
+partial results, and prevent receipt reuse after failure.
 
 ## 4. Path and file security
 - Determine canonical root on trusted host; normalize and compare every requested path against it.

@@ -70,6 +70,14 @@ digest-pinned image already containing Python and pytest and a local rootless Li
 verify no network, source/host/credential mounts, resource limits, timeout termination,
 and cleanup. A fake backend is not evidence that Docker or kernel isolation works.
 
+Phase 4.6 approval tests use synthetic repositories. Receipt hashing, expiry, replay, concurrency,
+and terminal output contracts are unit-tested on all platforms. Approval preflight integration and
+security tests run on Linux only and must be invoked explicitly by Ubuntu CI; Windows skips are not
+verification. They cover changed source, symlink/hard-link substitutions, policy denial, partial
+staging, complete preview requirements, and prove source files remain unchanged. No test enables
+live source application; real mutation, crash recovery, and cross-process replay protection remain
+unsupported and require a separate reviewed milestone.
+
 ## 4. Test conventions
 - Use **pytest** fixtures, parametrization, and named assertions.
 - Test behavior, errors, and state invariants—not implementation-specific prompt wording.

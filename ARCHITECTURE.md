@@ -246,6 +246,16 @@ private schema inaccessible to providers; it does not connect to the agent loop 
 Bounded unified diffs are previews against manager-retained baseline bytes, not evidence of applying
 changes to a live repository.
 
+Phase 4.6 adds security/approval.py for canonical, exact-action manifests and an instance-local
+one-time receipt ledger. application/patch_approval.py validates the manager-owned staged patch,
+rechecks source hashes using Linux descriptor-relative no-follow reads, reevaluates the live-write
+policy, and requests confirmation through a trusted terminal adapter in ui/approval.py. Receipts
+are retained by the application coordinator, are process-local, and are consumed once. Callers
+receive the reviewed manifest and outcome, not the receipt. A digest binds manifest data but is not
+evidence of consent.
+The application service intentionally has no source writer: applying a patch consumes the receipt
+and returns live_application_disabled. No CLI, agent, or dispatcher path can apply a live patch.
+
 Phase 4.5 adds `sandbox/execution.py` and `sandbox/docker_backend.py` for policy-gated execution of
 only the fixed Python syntax and pytest command families. `SandboxRunner` requires the exact active
 manager-owned staging handle and `SANDBOXED_TEST_EXECUTION` authorization, checks staging integrity
