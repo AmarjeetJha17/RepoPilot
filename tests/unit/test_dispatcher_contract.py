@@ -8,6 +8,8 @@ import pytest
 
 from repopilot.agent.contracts import ToolCall
 from repopilot.security.capabilities import Capability
+from repopilot.security.paths import PathAuthorizationError, PathFailure
+from repopilot.security.policy import PolicyReasonCode
 from repopilot.tools.definition import ToolDefinition
 from repopilot.tools.dispatcher import (
     ReadOnlyToolDispatcher,
@@ -64,6 +66,32 @@ def test_cancellation_prevents_registry_dispatch_without_policy_or_handler() -> 
 
     assert result.status is ToolExecutionStatus.CANCELLED
     assert not result.executed
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (PathFailure.SENSITIVE, PolicyReasonCode.SENSITIVE_RESOURCE.value),
+        (PathFailure.INVALID, PolicyReasonCode.INVALID_RESOURCE_PATH.value),
+        (PathFailure.SYMLINK, PolicyReasonCode.SYMLINK_NOT_ALLOWED.value),
+    ],
+)
+def test_initial_scope_failure_returns_safe_path_reason(
+    monkeypatch, failure: PathFailure, reason: str
+) -> None:
+    dispatcher = _dispatcher()
+    monkeypatch.setattr(dispatcher, "_verify_binding", lambda: None)
+
+    def reject_scope(*_args: object, **_kwargs: object) -> None:
+        raise PathAuthorizationError(failure)
+
+    monkeypatch.setattr(dispatcher, "_verify_scopes", reject_scope)
+    result = dispatcher.dispatch(ToolCall("scope-1", "repo_read_text", {"path": ".env"}))
+
+    assert result.status is ToolExecutionStatus.POLICY_DENIED
+    assert result.reason_code == reason
+    assert not result.executed
+    assert ".env" not in repr(result)
 
 
 def test_registered_name_with_changed_trusted_metadata_is_not_executable() -> None:

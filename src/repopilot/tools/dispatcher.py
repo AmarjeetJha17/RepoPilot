@@ -285,12 +285,28 @@ class ReadOnlyToolDispatcher:
                     call.arguments.model_dump(mode="python", by_alias=True),
                 )
             )
-        except (PathAuthorizationError, IntelligenceError, ToolRegistryError):
+        except PathAuthorizationError as error:
             return self._failure(
                 call.call_id,
                 call.name,
                 ToolExecutionStatus.POLICY_DENIED,
-                "resource_scope_invalid",
+                _path_reason(error.failure),
+                started,
+            )
+        except IntelligenceError as error:
+            return self._failure(
+                call.call_id,
+                call.name,
+                ToolExecutionStatus.POLICY_DENIED,
+                error.code.value,
+                started,
+            )
+        except ToolRegistryError as error:
+            return self._failure(
+                call.call_id,
+                call.name,
+                ToolExecutionStatus.POLICY_DENIED,
+                error.code.value,
                 started,
             )
         if current != call:

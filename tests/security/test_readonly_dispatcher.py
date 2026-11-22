@@ -145,25 +145,39 @@ def test_stale_policy_result_is_not_accepted_as_allow(tmp_path: Path, monkeypatc
 
 
 @pytest.mark.parametrize("binding", ["copied_handle", "wrong_identity", "foreign_manager"])
-def test_workspace_binding_mismatches_fail_closed(tmp_path: Path, binding: str) -> None:
+def test_workspace_binding_mismatches_fail_closed(
+    tmp_path: Path, monkeypatch, binding: str
+) -> None:
     _source, manager, handle, dispatcher = _prepared(tmp_path)
-    if binding == "copied_handle":
-        dispatcher._handle = replace(handle)
-    elif binding == "wrong_identity":
-        dispatcher._authorization = replace(
-            dispatcher._authorization, workspace_identity="workspace:wrong"
+    foreign: WorkspaceManager | None = None
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("A workspace-binding failure must not reach the handler.")
+
+    try:
+        monkeypatch.setattr(dispatcher._intelligence, "read_text", forbidden)
+        if binding == "copied_handle":
+            dispatcher._handle = replace(handle)
+        elif binding == "wrong_identity":
+            dispatcher._authorization = replace(
+                dispatcher._authorization, workspace_identity="workspace:wrong"
+            )
+        else:
+            foreign = WorkspaceManager(temp_root=tmp_path / "staging")
+            dispatcher._manager = foreign
+
+        result = dispatcher.dispatch(
+            ToolCall("binding-1", "repo_read_text", {"path": "pkg/first.py"})
         )
-    else:
-        foreign = WorkspaceManager(temp_root=tmp_path / "staging")
-        dispatcher._manager = foreign
 
-    result = dispatcher.dispatch(ToolCall("binding-1", "repo_read_text", {"path": "pkg/first.py"}))
-
-    assert result.status is ToolExecutionStatus.WORKSPACE_FAILURE
-    assert not result.executed
-    manager.close()
-    if foreign is not None:
-        foreign.close()
+        assert result.status is ToolExecutionStatus.WORKSPACE_FAILURE
+        assert not result.executed
+    finally:
+        try:
+            manager.close()
+        finally:
+            if foreign is not None:
+                foreign.close()
 
 
 def test_cleaned_workspace_is_rejected(tmp_path: Path) -> None:
@@ -176,9 +190,16 @@ def test_cleaned_workspace_is_rejected(tmp_path: Path) -> None:
     assert not result.executed
 
 
-@pytest.mark.parametrize("path", ["../outside", "C:\\Windows\\win.ini", "\\\\host\\share\\x"])
+@pytest.mark.parametrize(
+    ("path", "reason"),
+    [
+        ("../outside", PolicyReasonCode.INVALID_RESOURCE_PATH.value),
+        ("C:\\Windows\\win.ini", PolicyReasonCode.RESOURCE_OUTSIDE_WORKSPACE.value),
+        ("\\\\host\\share\\x", PolicyReasonCode.RESOURCE_OUTSIDE_WORKSPACE.value),
+    ],
+)
 def test_traversal_and_platform_paths_are_denied_before_handler(
-    tmp_path: Path, monkeypatch, path: str
+    tmp_path: Path, monkeypatch, path: str, reason: str
 ) -> None:
     _source, manager, _handle, dispatcher = _prepared(tmp_path)
 
@@ -189,7 +210,9 @@ def test_traversal_and_platform_paths_are_denied_before_handler(
     result = dispatcher.dispatch(ToolCall("path-1", "repo_read_text", {"path": path}))
 
     assert result.status is ToolExecutionStatus.POLICY_DENIED
+    assert result.reason_code == reason
     assert not result.executed
+    assert path not in repr(result)
     manager.close()
 
 
@@ -211,7 +234,9 @@ def test_sensitive_resource_is_denied_without_echoing_host_or_contents(
     manager.close()
 
 
-def test_symlink_substitution_is_rejected_by_policy_and_no_follow_reader(tmp_path: Path) -> None:
+def test_symlink_substitution_is_rejected_by_policy_and_no_follow_reader(
+    tmp_path: Path, monkeypatch
+) -> None:
     _source, manager, handle, dispatcher = _prepared(tmp_path)
     outside = tmp_path / "outside-secret.txt"
     outside.write_text("synthetic external data", encoding="utf-8")
@@ -219,9 +244,15 @@ def test_symlink_substitution_is_rejected_by_policy_and_no_follow_reader(tmp_pat
     staged.unlink()
     staged.symlink_to(outside)
 
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("A symlinked resource must not reach the handler.")
+
+    monkeypatch.setattr(dispatcher._intelligence, "read_text", forbidden)
+
     result = dispatcher.dispatch(ToolCall("link-1", "repo_read_text", {"path": "pkg/first.py"}))
 
     assert result.status is ToolExecutionStatus.POLICY_DENIED
+    assert result.reason_code == PolicyReasonCode.SYMLINK_NOT_ALLOWED.value
     assert "synthetic external data" not in repr(result)
     assert str(outside) not in repr(result)
     assert outside.read_text(encoding="utf-8") == "synthetic external data"
