@@ -69,10 +69,12 @@ security policy engine, bounded single-decision orchestrator, and Linux copy-bas
 repository workspace preparation are implemented. Phase 4.2 adds read-only,
 bounded repository discovery, UTF-8 excerpts, literal search, Python AST symbol
 indexing, and deterministic context selection over that staged copy. The
-orchestrator validates and authorizes proposed calls but does not execute them;
-repository intelligence is not registered as an executable model tool. Docker
-sandbox execution, concrete repository tools, persistence, and evaluation
-execution are not implemented yet.
+orchestrator validates and authorizes proposals but does not execute them. A
+separate, policy-enforced dispatcher can execute four bounded read-only repository
+tools when called by trusted application code; it is not connected to the
+orchestrator and never forwards results to a model provider. Write, Git-mutation,
+and sandbox-execution tools, persistence, and evaluation execution are not
+implemented yet.
 Native Windows and macOS workspace preparation fails closed; use Linux or WSL2. Unsupported OpenAI
 reasoning continuation remains rejected because the provider-neutral contract
 cannot preserve its opaque state.
@@ -85,6 +87,9 @@ and 50,000 AST nodes; and combined selected context at 64 KB. These operations
 read only an active workspace owned by its `WorkspaceManager`. Secret filtering
 is best-effort, and AST results are syntactic rather than semantic. Trusted
 application configuration can change these defaults but must keep them bounded.
+The separate dispatcher caps each structured result at 16 KB by default and uses
+a five-second soft execution budget; synchronous filesystem operations cannot be
+interrupted while in progress. Read results are not independent verification.
 
 ### Linux workspace checks from Windows
 

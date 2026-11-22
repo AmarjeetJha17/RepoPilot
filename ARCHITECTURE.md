@@ -58,9 +58,9 @@ flowchart TD
 ## 4. Logical modules and responsibilities
 - `cli`: argument parsing, interactive confirmations, user display; no direct filesystem mutation.
 - `application`: use-case orchestration; creates run config, owns approval UX contract.
-- `agent`: state machine, step budgets, retry policy, and policy-gated tool dispatch; never
-  bypasses policy. The current orchestrator supports one model decision per run, validates and
-  authorizes proposals, and records outcomes without dispatching tools.
+- `agent`: state machine, step budgets, and policy-gated orchestration; never bypasses policy. The
+  current orchestrator supports one model decision per run, validates and authorizes proposals, and
+  records outcomes without dispatching tools.
 - `providers`: model I/O normalization and provider error classification; bounded retries belong
   to the agent runtime. The OpenAI Responses adapter translates text and function-call history
   with correlated call IDs and rejects reasoning/continuation items the neutral response contract
@@ -68,8 +68,10 @@ flowchart TD
 - `context`: `RepositoryIntelligence` performs read-only bounded discovery, UTF-8 excerpts,
   literal search, Python AST indexing, and deterministic context selection over a manager-issued
   staged-workspace read capability. It does not call providers or grant tool execution.
-- `tools`: explicit typed definitions, ordered registry, and argument validation; validation is a
-  contract boundary and does not execute handlers or grant access.
+- `tools`: explicit typed definitions, ordered registry, argument validation, and a separately
+  callable allowlisted dispatcher for four read-only repository operations. Registry validation
+  does not execute handlers or grant access; the dispatcher obtains a fresh policy decision and
+  revalidates workspace/resource scope before execution. It is not wired into the agent loop.
 - `security`: deterministic capability decisions, scoped path checks, exact-action approval request
   contracts, redaction, and sandbox restrictions. Policy results are decisions, not executable
   tokens; the future execution layer must revalidate paths and enforce the result.
@@ -225,9 +227,13 @@ Staged content remains untrusted input. Sensitive-name exclusions and the worksp
 secret-pattern scan are best-effort, not a guarantee that no secret reaches a future model. The AST
 index is syntactic only and does not resolve imports, evaluate decorators/annotations, or execute
 code. Descriptor checks reduce races but do not claim protection against every concurrent same-user
-filesystem mutation. Repository intelligence is not registered as a model-executable tool; the
-authorization and execution boundary remains a later step. Limits are defaults controlled by trusted
-application configuration; the configured values must remain finite and bounded.
+filesystem mutation. The four read-only schemas may be proposed to a provider, but
+`AgentOrchestrator` does not dispatch them; the authorization boundary for directory-wide listing is
+the fixed staged root; search and symbol indexing take explicit, per-file scopes. The dispatcher
+caps outputs at 16 KB by default and does not send results to a provider. Limits are
+defaults controlled by trusted application configuration; configured values must remain finite and
+bounded. This read-only dispatch does not verify software correctness or transition an agent run to
+completion.
 
 Detailed threat model: [SECURITY.md](SECURITY.md).
 

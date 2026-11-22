@@ -21,17 +21,19 @@ def discover_files(
     suffixes: frozenset[str] | None = None,
     max_files: int | None = None,
     max_depth: int | None = None,
+    max_entries: int | None = None,
 ) -> DiscoveryResult:
     """Walk eligible staged entries in bounded order; report intentional cutoffs."""
     file_limit = safe_limit(max_files, limits.max_files)
     depth_limit = safe_limit(max_depth, limits.max_depth, allow_zero=True)
+    entry_limit = safe_limit(max_entries, limits.max_entries)
     collected: list[DiscoveredFile] = []
     scanned = 0
     truncated = False
 
     def walk(directory: str, depth: int) -> None:
         nonlocal scanned, truncated
-        remaining = limits.max_entries - scanned
+        remaining = entry_limit - scanned
         if remaining <= 0:
             truncated = True
             return

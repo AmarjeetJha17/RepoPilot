@@ -50,6 +50,12 @@ jobs:
       - name: Repository intelligence integration tests (Linux)
         run: uv run --no-sync pytest tests/integration/test_repository_intelligence.py -q
 
+      - name: Read-only dispatcher security tests (Linux)
+        run: uv run --no-sync pytest tests/security/test_readonly_dispatcher.py -q
+
+      - name: Read-only dispatcher integration tests (Linux)
+        run: uv run --no-sync pytest tests/integration/test_readonly_dispatcher.py -q
+
       - name: Lint
         run: uv run --no-sync ruff check .
 
