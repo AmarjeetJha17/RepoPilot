@@ -199,9 +199,9 @@ cleanup behavior, not the behavior of a real Docker daemon or kernel isolation.
 - Model cannot grant itself additional tools or approve commands via natural language.
 - Every proposed call is parsed against a strict tool-specific schema and authorized by deterministic code.
 - `ToolRegistry` performs name and argument-schema validation only. Authorization remains with `PolicyEngine`, human approval remains separate, and this registry does not dispatch or execute tools.
-- `AgentOrchestrator` validates each proposed call and evaluates policy for each valid call; `ALLOW` records an authorized proposal only. It does not dispatch tools, create `ToolResult` values, or treat model output as approval.
+- `AgentOrchestrator` validates each proposed call and evaluates policy for each valid call; `ALLOW` records an authorized proposal only. It does not dispatch tools, create `ToolResult` values, or treat model output as approval. The existing single-decision API remains unchanged.
 - `ReadOnlyToolDispatcher` is a separate trusted application component for exactly four allowlisted read operations. It requires a registry-validated call, exact trusted tool metadata, an active handle owned by the supplied manager, a staging-root and identity match in `AuthorizationContext`, a fresh correlated policy decision, and a second workspace/schema/resource check before calling one fixed handler. The dispatcher is not wired into `AgentOrchestrator`.
-- The current orchestration cycle is limited to one provider request and does not preserve OpenAI reasoning continuation state. Unsupported continuation remains an explicit provider error; do not simulate it by dropping opaque state.
+- The existing `AgentOrchestrator` remains limited to one provider request. The separate opt-in `MultiStepAgentOrchestrator` feeds actual dispatcher results only to providers that explicitly advertise both faithful conversation continuation and permission for repository feedback. In this milestone only the offline `MockModelProvider` advertises both. `OpenAIModelProvider` advertises neither; read results are never forwarded to it, and no subsequent request is made. Opaque provider reasoning state is never dropped or simulated.
 - Runtime events are bounded in memory and contain typed metadata only; prompts, response bodies, tool arguments, and file contents are excluded. Dropped events are counted in the run result.
 - Cancellation propagates without retry and returns a content-minimized `CANCELLED` run snapshot when the run has started. This loop creates no background tasks, subprocesses, containers, or filesystem changes and makes no cleanup or rollback guarantee for future execution systems.
 - Use explicit tool allowlists, no unrestricted `sh -c` or arbitrary shell command on the host.
@@ -270,6 +270,24 @@ Results contain bounded actual handler output and safe metadata; raw arguments a
 logged. A successful read is not independent verification and does not mark an agent run complete.
 The dispatcher does not forward results to OpenAI or another provider. Future model-context export
 needs a separate disclosure and redaction policy because credential filtering is best-effort.
+
+Phase 4.7 adds explicit application-level use of the dispatcher through
+`MultiStepAgentOrchestrator`; it is not enabled by the CLI. The orchestrator accepts only the exact
+four registered read-only definitions and validates every response batch before invoking a handler.
+It binds the dispatcher's trusted run ID to the run, preserves actual result call IDs and order,
+stops on any non-success result, and never treats schema validity as authorization. Result messages
+are typed tool-role messages and explicitly label payloads as untrusted repository data. The
+orchestrator's events omit task text, arguments, and payloads.
+
+Repository feedback requires the trusted `MultiStepConfig.allow_repository_feedback` flag, which
+defaults to false, and is enabled only for the deterministic offline mock provider in this
+milestone. The OpenAI adapter is not continuation-capable and has repository feedback disabled, so
+no tool payload reaches it. No external-provider disclosure switch is implemented. Tool feedback and the
+full accumulated conversation are byte-bounded; when a result payload exceeds its feedback cap, the
+payload is omitted and the result is marked truncated, or the run stops if even safe metadata does
+not fit. Model responses, including text claiming success, do not create verification evidence or
+mark a run complete. This workflow does not write staged/source files or run commands, Docker, or
+Git operations.
 
 ## 12. Vulnerability reporting
 Until a dedicated private security channel exists, **do not post exploit details or credentials in public GitHub issues**. Maintainers should add GitHub private vulnerability reporting in repository Security settings and replace this section with verified private-report instructions before the first public release. Never invent a security email address.

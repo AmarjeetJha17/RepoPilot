@@ -59,8 +59,10 @@ flowchart TD
 - `cli`: argument parsing, interactive confirmations, user display; no direct filesystem mutation.
 - `application`: use-case orchestration; creates run config, owns approval UX contract.
 - `agent`: state machine, step budgets, and policy-gated orchestration; never bypasses policy. The
-  current orchestrator supports one model decision per run, validates and authorizes proposals, and
-  records outcomes without dispatching tools.
+  existing `AgentOrchestrator` supports one model decision per run, validates and authorizes
+  proposals, and records outcomes without dispatching tools. The opt-in
+  `MultiStepAgentOrchestrator` supports bounded feedback cycles only through the fixed read-only
+  dispatcher; it does not stage patches or claim verification.
 - `providers`: model I/O normalization and provider error classification; bounded retries belong
   to the agent runtime. The OpenAI Responses adapter translates text and function-call history
   with correlated call IDs and rejects reasoning/continuation items the neutral response contract
@@ -71,7 +73,8 @@ flowchart TD
 - `tools`: explicit typed definitions, ordered registry, argument validation, and a separately
   callable allowlisted dispatcher for four read-only repository operations. Registry validation
   does not execute handlers or grant access; the dispatcher obtains a fresh policy decision and
-  revalidates workspace/resource scope before execution. It is not wired into the agent loop.
+  revalidates workspace/resource scope before execution. Only the opt-in multi-step orchestrator
+  calls it; the single-decision orchestrator and CLI remain disconnected from tool execution.
 - `security`: deterministic capability decisions, scoped path checks, exact-action approval request
   contracts, redaction, and sandbox restrictions. Policy results are decisions, not executable
   tokens; the future execution layer must revalidate paths and enforce the result.
@@ -141,6 +144,10 @@ stateDiagram-v2
     PLANNING --> FAILED: unrecoverable
     PLANNING --> CANCELLED: user cancels
     EXECUTING --> VERIFYING
+    EXECUTING --> PLANNING: read-only observations recorded
+    EXECUTING --> BLOCKED: read-only call denied or failed closed
+    EXECUTING --> AWAITING_APPROVAL: policy requires approval
+    EXECUTING --> PARTIAL: runtime limit reached
     EXECUTING --> FAILED: unrecoverable
     EXECUTING --> CANCELLED: user cancels
     VERIFYING --> EXECUTING: retry within budget
@@ -164,12 +171,34 @@ require inventing progress. Unrecoverable processing failures may end any proces
 approval phase; failure to create a run does not produce a run record. These additions preserve
 the terminal-state rule and leave verification retries subject to the execution budget.
 
-The current `AgentOrchestrator` makes at most one provider request. Text responses terminate as
+The existing `AgentOrchestrator` makes at most one provider request. Text responses terminate as
 `PARTIAL`; invalid or denied tool proposals terminate as `BLOCKED`; approval-required proposals
 remain `AWAITING_APPROVAL`; and policy-allowed proposals terminate as `PARTIAL` because they
 still await a future execution layer. An `ALLOW` is not execution, and this cycle creates neither
 tool results nor verification evidence. The OpenAI adapter's unsupported reasoning continuation
 remains rejected until the provider-neutral contract can preserve its continuation state.
+
+Phase 4.7 adds a separate, explicitly invoked `MultiStepAgentOrchestrator`. It starts from a trusted
+task, a caller-selected model, and a `ReadOnlyToolDispatcher` already bound to an active staging
+workspace and matching run ID. It validates a complete response batch through the exact four-tool
+registry before dispatch, then records only the dispatcher's correlated, bounded actual results.
+Successful result messages retain call IDs and order and are explicitly marked as untrusted
+repository data. Denial, approval requirement, malformed proposals, workspace failures, or
+dispatcher errors stop the run; no failed or skipped call is described as executed. The additional
+`EXECUTING → PLANNING` lifecycle edge represents another decision after successful read-only
+observations. The existing single-decision API is unchanged.
+
+Only the deterministic offline mock advertises both conversation continuation and repository
+feedback support. Trusted `MultiStepConfig.allow_repository_feedback` must also be explicitly set;
+it defaults to false. The OpenAI adapter explicitly advertises neither; a tool proposal can be
+handled locally, but its result is never sent back to that provider, and no subsequent request is
+made.
+Every request, call proposal, run duration, feedback message, total conversation, and in-memory
+event stream has a finite trusted ceiling. Runs end as `PARTIAL` for a text answer or a limit,
+`BLOCKED` for an invalid/denied call, `AWAITING_APPROVAL` if the dispatcher reports that status,
+or `FAILED` for provider/dispatcher failures. Read-only work
+does not stage or apply changes, run Docker or shell commands, create independent verification
+evidence, or mark a run complete.
 
 ## 7. Execution sequence
 ```mermaid

@@ -141,6 +141,11 @@ class ReadOnlyToolDispatcher:
         self._monotonic = monotonic
         self._allowlist = {item.name: item for item in readonly_tool_definitions()}
 
+    @property
+    def run_id(self) -> str:
+        """Trusted run identifier bound to every policy decision made by this dispatcher."""
+        return self._authorization.run_id
+
     def dispatch(self, call: ToolCall, *, cancellation: Event | None = None) -> ToolExecutionResult:
         """Execute one proposal, returning a content-minimized outcome on failure."""
         started = self._monotonic()

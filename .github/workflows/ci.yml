@@ -56,6 +56,12 @@ jobs:
       - name: Read-only dispatcher integration tests (Linux)
         run: uv run --no-sync pytest tests/integration/test_readonly_dispatcher.py -q
 
+      - name: Multi-step orchestration security tests (Linux)
+        run: uv run --no-sync pytest tests/security/test_multistep_agent.py -q
+
+      - name: Multi-step orchestration integration tests (Linux)
+        run: uv run --no-sync pytest tests/integration/test_multistep_agent.py -q
+
       - name: Patch staging security tests (Linux)
         run: uv run --no-sync pytest tests/security/test_patch_staging.py -q
 

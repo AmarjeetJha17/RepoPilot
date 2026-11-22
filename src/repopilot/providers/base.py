@@ -237,6 +237,12 @@ type ModelResponse = TextResponse | ToolCallResponse
 class ModelProvider(Protocol):
     """Normalize provider I/O while leaving authorization to trusted application code."""
 
+    supports_conversation_continuation: bool
+    """Whether the adapter can faithfully represent prior calls and tool results."""
+
+    allows_repository_feedback: bool
+    """Whether this provider is configured to receive repository data in follow-up requests."""
+
     async def next_action(self, request: ModelRequest) -> ModelResponse:
         """Honor the request timeout and propagate cancellation through task cancellation."""
         ...

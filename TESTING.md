@@ -78,6 +78,15 @@ staging, complete preview requirements, and prove source files remain unchanged.
 live source application; real mutation, crash recovery, and cross-process replay protection remain
 unsupported and require a separate reviewed milestone.
 
+Phase 4.7 multi-step orchestration tests use scripted offline providers and manager-owned synthetic
+workspaces. Unit tests cover correlated ordered feedback, invalid/duplicate proposals, denial and
+approval termination, provider continuation capability, request/tool/deadline/time limits,
+cancellation, bounded feedback/conversation/events, and absence of verification evidence. Linux
+integration and security tests use the real read-only dispatcher to prove actual staged reads,
+sensitive-file exclusion, workspace-identity binding, no source mutation, and no provider request
+after a denied call. Ubuntu CI runs both files explicitly; Windows skips are not Linux verification.
+No live API, shell, Git mutation, Docker, patch staging, or live application occurs in this workflow.
+
 ## 4. Test conventions
 - Use **pytest** fixtures, parametrization, and named assertions.
 - Test behavior, errors, and state invariants—not implementation-specific prompt wording.
@@ -94,6 +103,7 @@ unsupported and require a separate reviewed milestone.
 | Allowed path scope | traversal, symlink, case-sensitivity, UNC/device paths where applicable |
 | Bounded agent loop | fake model emits infinite tool calls; budget stops |
 | Single-decision orchestration | mock text/tool-call responses cover validation, policy outcomes, limits, cancellation and no dispatch |
+| Multi-step read-only orchestration | offline mock cycles preserve call IDs/order; dispatcher results are real, bounded, and denied results stop continuation |
 | Runtime budget accounting | fake monotonic clocks and synthetic provider usage cover hard count/time limits, unknown usage, and bounded event drops |
 | Patch staging | malformed/duplicate/oversized proposals, invalid hash, policy denial, and path escapes fail safely; replacements are atomic per file and the live/source repo remains unchanged |
 | Repository workspace | bounded copy, secret/cache exclusion, immutable baseline, staged integrity, owned cleanup, no source mutation |
