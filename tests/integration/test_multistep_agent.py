@@ -54,7 +54,7 @@ class _CapturingMockProvider(MockModelProvider):
 
 def _workflow(tmp_path: Path):
     source, source_files = create_repository(tmp_path)
-    original = {path: path.read_bytes() for path in source_files.values()}
+    original = {source / relative: content for relative, content in source_files.items()}
     staging = tmp_path / "staging"
     staging.mkdir()
     manager = WorkspaceManager(temp_root=staging)
