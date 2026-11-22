@@ -106,13 +106,16 @@ def authorize_resource_path(
 
     try:
         canonical_root = root.resolve(strict=True)
-        candidate = canonical_root.joinpath(*parts).resolve(strict=False)
+        lexical_candidate = canonical_root.joinpath(*parts)
+        if forbid_symlinks and _contains_symlink(lexical_candidate, canonical_root):
+            raise PathAuthorizationError(PathFailure.SYMLINK)
+        candidate = lexical_candidate.resolve(strict=False)
         candidate.relative_to(canonical_root)
+    except PathAuthorizationError:
+        raise
     except (OSError, RuntimeError, ValueError) as error:
         raise PathAuthorizationError(PathFailure.OUTSIDE) from error
 
-    if forbid_symlinks and _contains_symlink(canonical_root.joinpath(*parts), canonical_root):
-        raise PathAuthorizationError(PathFailure.SYMLINK)
     exists = candidate.exists()
     if not exists and not allow_missing:
         raise PathAuthorizationError(PathFailure.MISSING)
