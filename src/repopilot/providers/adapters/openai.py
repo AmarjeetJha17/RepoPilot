@@ -40,6 +40,9 @@ class OpenAICredentialsMissingError(ProviderAuthenticationError):
 class OpenAIModelProvider:
     """Make bounded, non-streaming Responses API calls without executing proposed tools."""
 
+    supports_conversation_continuation = False
+    allows_repository_feedback = False
+
     def __init__(self, *, client: AsyncOpenAI | None = None) -> None:
         self._owns_client = client is None
         try:

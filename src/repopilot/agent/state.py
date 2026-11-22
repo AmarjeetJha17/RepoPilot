@@ -85,7 +85,15 @@ _ALLOWED_TRANSITIONS: Mapping[RunStatus, frozenset[RunStatus]] = MappingProxyTyp
             }
         ),
         RunStatus.EXECUTING: frozenset(
-            {RunStatus.VERIFYING, RunStatus.FAILED, RunStatus.CANCELLED}
+            {
+                RunStatus.PLANNING,
+                RunStatus.VERIFYING,
+                RunStatus.PARTIAL,
+                RunStatus.AWAITING_APPROVAL,
+                RunStatus.BLOCKED,
+                RunStatus.FAILED,
+                RunStatus.CANCELLED,
+            }
         ),
         RunStatus.VERIFYING: frozenset(
             {

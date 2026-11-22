@@ -69,11 +69,10 @@ security policy engine, bounded single-decision orchestrator, and Linux copy-bas
 repository workspace preparation are implemented. Phase 4.2 adds read-only,
 bounded repository discovery, UTF-8 excerpts, literal search, Python AST symbol
 indexing, and deterministic context selection over that staged copy. The
-orchestrator validates and authorizes proposals but does not execute them. A
-separate, policy-enforced dispatcher can execute four bounded read-only repository
-tools when called by trusted application code; it is not connected to the
-orchestrator and never forwards results to a model provider. Write, Git-mutation,
-persistence, and evaluation execution are not
+original single-decision orchestrator validates and authorizes proposals but does
+not execute them. Phase 4.7 adds a separate opt-in multi-step orchestrator that
+uses the policy-enforced dispatcher for the four bounded read-only repository
+tools. Write, Git-mutation, persistence, and evaluation execution are not
 implemented yet. Phase 4.4 adds a bounded safe patch proposal/staging API for
 existing UTF-8 files in an owned staging workspace. It does not apply patches to
 the source repository, execute replacement content, or connect patch staging to
@@ -105,6 +104,27 @@ application configuration can change these defaults but must keep them bounded.
 The separate dispatcher caps each structured result at 16 KB by default and uses
 a five-second soft execution budget; synchronous filesystem operations cannot be
 interrupted while in progress. Read results are not independent verification.
+
+### Opt-in multi-step read-only workflow
+
+Trusted application code can explicitly invoke `MultiStepAgentOrchestrator` with
+the exact read-only registry and a dispatcher already bound to the active staging
+workspace and run. It validates the whole proposed tool-call batch before any
+dispatch, reuses the dispatcher's policy and workspace checks, preserves call IDs
+and order, and returns actual bounded results as untrusted tool feedback. Any
+invalid, denied, approval-required, or failed call stops the workflow. Request,
+tool-call, run-time, feedback, conversation, and event budgets are finite.
+
+Only `MockModelProvider` supports multi-step continuation with repository feedback
+in this milestone, so this mode is offline and deterministic. The trusted
+`MultiStepConfig.allow_repository_feedback` option is required and defaults to
+false. `OpenAIModelProvider`
+continues to support its existing single request, but advertises continuation and
+repository feedback as unsupported; its proposed read may be executed locally by
+the opt-in workflow, but no result is sent back and no follow-up request is made.
+There is no external-provider disclosure switch, CLI command, shell/Git/Docker
+execution, patch staging, source write, or independent verification in this mode.
+A model's text response ends the run as `PARTIAL`, never `COMPLETED` or verified.
 
 ### Linux workspace checks from Windows
 

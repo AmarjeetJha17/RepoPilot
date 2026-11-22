@@ -41,6 +41,9 @@ class MockRequestSummary:
 class MockModelProvider:
     """Return scripted outcomes in order and reject overlapping calls on one instance."""
 
+    supports_conversation_continuation = True
+    allows_repository_feedback = True
+
     def __init__(
         self,
         outcomes: Sequence[ModelResponse | ModelProviderError],
