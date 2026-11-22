@@ -21,6 +21,7 @@ from repopilot.security.paths import DEFAULT_SENSITIVE_PATTERNS
 
 if TYPE_CHECKING:
     from repopilot.sandbox.read_access import WorkspaceReadAccess
+    from repopilot.sandbox.write_access import WorkspaceWriteAccess
 
 _CHUNK_SIZE = 64 * 1024
 _SECRET_CONTENT_PATTERNS = (
@@ -115,6 +116,7 @@ _SECURE_DESCRIPTOR_IO = (
     and os.mkdir in os.supports_dir_fd
     and os.rmdir in os.supports_dir_fd
     and os.unlink in os.supports_dir_fd
+    and os.rename in os.supports_dir_fd
     and os.scandir in os.supports_fd
 )
 
@@ -274,6 +276,11 @@ class WorkspaceHandle:
             raise TypeError("Workspace handle fields do not match the typed contract.")
 
 
+def workspace_identity_for_handle(handle: WorkspaceHandle) -> str:
+    """Return the policy-context label; the manager's object identity is authoritative."""
+    return f"workspace:{handle.identity.value}"
+
+
 class IntegrityChangeKind(StrEnum):
     """Detected differences between the staged tree and its baseline."""
 
@@ -310,6 +317,7 @@ class IntegrityReport:
 class _CopyState:
     limits: WorkspaceLimits
     files: list[BaselineFile] = field(default_factory=list)
+    baseline_contents: dict[str, bytes] = field(default_factory=dict)
     total_bytes: int = 0
     seen_names: set[str] = field(default_factory=set)
 
@@ -321,6 +329,7 @@ class _OwnedWorkspace:
     root_fd: int
     directory_name: str
     root_identity: tuple[int, int]
+    baseline_contents: dict[str, bytes]
     cleanup_state: WorkspaceCleanupState = WorkspaceCleanupState.ACTIVE
 
 
@@ -416,6 +425,7 @@ class WorkspaceManager:
                 root_fd,
                 directory_name,
                 root_identity,
+                copy_state.baseline_contents,
             )
             self._workspaces[handle.identity] = owned
             parent_fd = root_fd = -1
@@ -499,9 +509,11 @@ class WorkspaceManager:
             )
         except OSError as error:
             owned.cleanup_state = WorkspaceCleanupState.FAILED
+            owned.baseline_contents.clear()
             raise WorkspaceError(WorkspaceErrorCode.CLEANUP_FAILED) from error
         os.close(owned.root_fd)
         os.close(owned.parent_fd)
+        owned.baseline_contents.clear()
         owned.cleanup_state = WorkspaceCleanupState.CLEANED
         return owned.cleanup_state
 
@@ -521,6 +533,37 @@ class WorkspaceManager:
         from repopilot.sandbox.read_access import WorkspaceReadAccess
 
         return WorkspaceReadAccess(self, handle)
+
+    def write_access(self, handle: WorkspaceHandle) -> WorkspaceWriteAccess:
+        """Issue a manager-bound descriptor-relative writer for one active workspace."""
+        if not _SECURE_DESCRIPTOR_IO:
+            raise WorkspaceError(WorkspaceErrorCode.PLATFORM_UNSUPPORTED)
+        owned = self._owned(handle)
+        if owned.cleanup_state is not WorkspaceCleanupState.ACTIVE or not _root_name_matches(owned):
+            raise WorkspaceError(WorkspaceErrorCode.OWNERSHIP_MISMATCH)
+        if _mount_points_under(handle.staging_root, _read_mount_points()):
+            raise WorkspaceError(WorkspaceErrorCode.UNSUPPORTED_ENTRY)
+        from repopilot.sandbox.write_access import WorkspaceWriteAccess
+
+        return WorkspaceWriteAccess(self, handle)
+
+    def baseline_content(self, handle: WorkspaceHandle, relative_path: str) -> bytes:
+        """Return manager-retained preparation bytes for one baseline file."""
+        owned = self._owned(handle)
+        if owned.cleanup_state is not WorkspaceCleanupState.ACTIVE:
+            raise WorkspaceError(WorkspaceErrorCode.OWNERSHIP_MISMATCH)
+        content = owned.baseline_contents.get(relative_path)
+        expected = next(
+            (item for item in handle.baseline.files if item.path == relative_path), None
+        )
+        if (
+            content is None
+            or expected is None
+            or len(content) != expected.size_bytes
+            or hashlib.sha256(content).hexdigest() != expected.sha256
+        ):
+            raise WorkspaceError(WorkspaceErrorCode.OWNERSHIP_MISMATCH)
+        return content
 
     def close(self) -> None:
         """Clean every manager-owned workspace and report failures after trying all."""
@@ -686,8 +729,9 @@ def _copy_directory(
                 state,
             )
             if result is not None:
-                size, digest = result
+                size, digest, content = result
                 state.files.append(BaselineFile(relative, size, digest))
+                state.baseline_contents[relative] = content
         else:
             raise WorkspaceError(WorkspaceErrorCode.UNSUPPORTED_ENTRY)
     if not _same_stat(before, os.fstat(source_fd)):
@@ -700,7 +744,7 @@ def _copy_regular_file(
     name: str,
     source_info: os.stat_result,
     state: _CopyState,
-) -> tuple[int, str] | None:
+) -> tuple[int, str, bytes] | None:
     if source_info.st_size > state.limits.max_file_bytes:
         raise WorkspaceError(WorkspaceErrorCode.LIMIT_EXCEEDED)
     if source_info.st_size + state.total_bytes > state.limits.max_total_bytes:
@@ -744,7 +788,8 @@ def _copy_regular_file(
         if not _same_stat(opened, os.fstat(source_fd)):
             raise WorkspaceError(WorkspaceErrorCode.SOURCE_CHANGED)
         state.total_bytes += total
-        return total, hashlib.sha256(content).hexdigest()
+        snapshot = bytes(content)
+        return total, hashlib.sha256(snapshot).hexdigest(), snapshot
     except BaseException:
         if destination_fd >= 0:
             os.close(destination_fd)

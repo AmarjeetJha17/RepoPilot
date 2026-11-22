@@ -74,7 +74,10 @@ separate, policy-enforced dispatcher can execute four bounded read-only reposito
 tools when called by trusted application code; it is not connected to the
 orchestrator and never forwards results to a model provider. Write, Git-mutation,
 and sandbox-execution tools, persistence, and evaluation execution are not
-implemented yet.
+implemented yet. Phase 4.4 adds a bounded safe patch proposal/staging API for
+existing UTF-8 files in an owned staging workspace. It does not apply patches to
+the source repository, execute replacement content, or connect patch staging to
+the agent loop.
 Native Windows and macOS workspace preparation fails closed; use Linux or WSL2. Unsupported OpenAI
 reasoning continuation remains rejected because the provider-neutral contract
 cannot preserve its opaque state.

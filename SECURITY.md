@@ -97,6 +97,23 @@ the recorded directory identity; if the owned directory path was replaced, clean
 not follow or delete the replacement. The manifest verifies staged content integrity only, not
 source integrity or software correctness. Cleanup failures are surfaced to the caller.
 
+Phase 4.4 adds `PatchStager` for complete UTF-8 text replacement of existing, eligible baseline
+files in an active manager-owned staging workspace. Immutable proposal models reject unknown fields
+and fix the operation to `replace_text`; trusted `PatchLimits` cap file count, bytes, changed lines,
+and diff output. The manager retains a bounded in-memory copy of eligible baseline bytes, which is
+cleared during cleanup and is not added to the public hash-only manifest.
+
+Staging performs strict proposal validation, fresh policy authorization for the exact staging root
+and `STAGED_FILE_MODIFICATION` capability, then rechecks every target hash and aggregate workspace
+size before writing any file. The descriptor-relative writer refuses links, hard links, excluded
+names, and non-regular files; it writes a mode-restricted temporary sibling, fsyncs it, revalidates
+the original, and renames atomically within that directory. Each replacement is atomic. A multi-file
+proposal is preflighted as a batch but is not a filesystem transaction: a later failure can leave
+earlier replacements staged and is reported as partial. This interface does not authorize live
+repository writes, dispatch model-callable tools, execute replacement content, or provide same-user
+adversarial race immunity. Diff output uses relative paths, escapes control characters, and reports
+truncation explicitly.
+
 ## 5. Sandbox baseline
 A **reference Docker runner** must:
 - Use disposable workspace mounted only where required; avoid exposing developer repository, host home and daemon socket.

@@ -1,5 +1,18 @@
 """Isolated workspace preparation and execution environment interfaces."""
 
+from repopilot.sandbox.patches import (
+    DiffPreview,
+    FileChangeSummary,
+    FileReplacement,
+    PatchComparisonResult,
+    PatchError,
+    PatchFailure,
+    PatchLimits,
+    PatchProposal,
+    PatchStagingResult,
+    PatchStagingStatus,
+    PatchValidationResult,
+)
 from repopilot.sandbox.read_access import (
     WorkspaceBytes,
     WorkspaceDirectoryListing,
@@ -20,11 +33,16 @@ from repopilot.sandbox.workspace import (
     WorkspaceLimits,
     WorkspaceManager,
     WorkspacePreparationStatus,
+    workspace_identity_for_handle,
 )
+from repopilot.sandbox.write_access import WorkspaceWriteAccess
 
 __all__ = [
     "BaselineFile",
     "BaselineManifest",
+    "DiffPreview",
+    "FileChangeSummary",
+    "FileReplacement",
     "IntegrityChange",
     "IntegrityChangeKind",
     "IntegrityReport",
@@ -40,4 +58,14 @@ __all__ = [
     "WorkspaceManager",
     "WorkspacePreparationStatus",
     "WorkspaceReadAccess",
+    "WorkspaceWriteAccess",
+    "PatchComparisonResult",
+    "PatchError",
+    "PatchFailure",
+    "PatchLimits",
+    "PatchProposal",
+    "PatchStagingResult",
+    "PatchStagingStatus",
+    "PatchValidationResult",
+    "workspace_identity_for_handle",
 ]

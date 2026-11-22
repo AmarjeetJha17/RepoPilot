@@ -75,8 +75,11 @@ flowchart TD
 - `security`: deterministic capability decisions, scoped path checks, exact-action approval request
   contracts, redaction, and sandbox restrictions. Policy results are decisions, not executable
   tokens; the future execution layer must revalidate paths and enforce the result.
-- `sandbox`: copy-based repository workspace preparation, integrity checks, and later container
-  lifecycle and quotas. The initial `workspace` manager does not execute code or tools.
+- `sandbox`: copy-based repository workspace preparation, integrity checks, manager-owned bounded
+  baseline snapshots, and descriptor-relative staged text replacement. Patch proposals are validated
+  and freshly authorized before writes; individual replacements use same-directory atomic rename,
+  while multi-file proposals are preflighted together but are not transactionally atomic. No source
+  repository files are changed and no code is executed. Container lifecycle remains future work.
 - `persistence`: transaction repositories and schema migrations.
 - `evaluation`: task manifests, scoring, independent tests, aggregations.
 - `observability`: audit events, logging, trace spans, usage accounting.
@@ -103,13 +106,13 @@ repopilot/
 ├── src/repopilot/
 │   ├── __init__.py
 │   ├── cli/{__init__.py,main.py,commands/}
-│   ├── application/{__init__.py,services.py}
+│   ├── application/{__init__.py,services.py,patch_staging.py}
 │   ├── agent/{__init__.py,loop.py,state.py,budget.py}
 │   ├── providers/{__init__.py,base.py,mock.py,adapters/}
 │   ├── context/{__init__.py,intelligence.py,discovery.py,reader.py,search.py,symbols.py,models.py}
 │   ├── tools/{__init__.py,registry.py,read.py,patch.py,git.py,test.py}
 │   ├── security/{__init__.py,policy.py,paths.py,redaction.py}
-│   ├── sandbox/{__init__.py,runner.py,workspace.py}
+│   ├── sandbox/{__init__.py,runner.py,workspace.py,read_access.py,write_access.py,patches.py}
 │   ├── persistence/{__init__.py,models.py,db.py,repositories/}
 │   ├── evaluation/{__init__.py,runner.py,scoring.py,schemas.py}
 │   ├── observability/{__init__.py,tracing.py,logging.py}
@@ -234,6 +237,14 @@ caps outputs at 16 KB by default and does not send results to a provider. Limits
 defaults controlled by trusted application configuration; configured values must remain finite and
 bounded. This read-only dispatch does not verify software correctness or transition an agent run to
 completion.
+
+Phase 4.4's proposal and result types live in `sandbox/patches.py`; its low-level manager-bound
+writer lives in `sandbox/write_access.py`. `application/patch_staging.py` coordinates policy
+authorization, preflight, staging, and diff previews without exposing a model-callable write tool.
+It accepts complete UTF-8 replacements for existing baseline files only. Policy validation uses a
+private schema inaccessible to providers; it does not connect to the agent loop or dispatcher.
+Bounded unified diffs are previews against manager-retained baseline bytes, not evidence of applying
+changes to a live repository.
 
 Detailed threat model: [SECURITY.md](SECURITY.md).
 

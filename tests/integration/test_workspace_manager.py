@@ -58,8 +58,85 @@ def test_prepares_copy_with_stable_baseline_and_leaves_source_unchanged(tmp_path
     assert (handle.staging_root / "src" / "module.py").stat().st_mode & 0o777 == 0o600
     assert str(source) not in handle.baseline.to_json()
     assert (source / "src" / "module.py").read_bytes() == original
+
+
+def test_manager_retains_bounded_baseline_and_replaces_file_atomically(tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    original = (source / "src" / "module.py").read_bytes()
+    replacement = b"VALUE = 2\n"
+    manager = _manager(tmp_path)
+    handle = manager.prepare(source)
+    write_access = manager.write_access(handle)
+
+    assert manager.baseline_content(handle, "src/module.py") == original
+    digest = write_access.replace_bytes(
+        "src/module.py",
+        expected_sha256=hashlib.sha256(original).hexdigest(),
+        content=replacement,
+        max_original_bytes=1024,
+        max_replacement_bytes=1024,
+    )
+
+    assert digest == hashlib.sha256(replacement).hexdigest()
+    assert (handle.staging_root / "src" / "module.py").read_bytes() == replacement
+    assert (handle.staging_root / "src" / "module.py").stat().st_mode & 0o777 == 0o600
+    assert manager.baseline_content(handle, "src/module.py") == original
+    assert (source / "src" / "module.py").read_bytes() == original
+    manager.cleanup(handle)
+
+
+def test_write_access_rejects_stale_hash_without_leaving_temporary_files(tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    manager = _manager(tmp_path)
+    handle = manager.prepare(source)
+    write_access = manager.write_access(handle)
+    target = handle.staging_root / "src" / "module.py"
+    original = target.read_bytes()
+
+    with pytest.raises(WorkspaceError) as error:
+        write_access.replace_bytes(
+            "src/module.py",
+            expected_sha256="0" * 64,
+            content=b"VALUE = 2\n",
+            max_original_bytes=1024,
+            max_replacement_bytes=1024,
+        )
+
+    assert error.value.code is WorkspaceErrorCode.SOURCE_CHANGED
+    assert target.read_bytes() == original
+    assert tuple(path.name for path in target.parent.iterdir()) == ("module.py",)
     manager.cleanup(handle)
     assert (source / "src" / "module.py").read_bytes() == original
+
+
+def test_write_access_does_not_remove_unowned_temporary_name_on_collision(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = _source(tmp_path)
+    manager = _manager(tmp_path)
+    handle = manager.prepare(source)
+    target_parent = handle.staging_root / "src"
+    collision = target_parent / ".repopilot-write-collision"
+    import repopilot.sandbox.write_access as write_access_module
+
+    def create_collision(_size: int) -> str:
+        collision.write_text("keep", encoding="utf-8")
+        return "collision"
+
+    monkeypatch.setattr(write_access_module, "token_hex", create_collision)
+
+    with pytest.raises(WorkspaceError):
+        manager.write_access(handle).replace_bytes(
+            "src/module.py",
+            expected_sha256=hashlib.sha256(b"VALUE = 1\n").hexdigest(),
+            content=b"VALUE = 2\n",
+            max_original_bytes=1024,
+            max_replacement_bytes=1024,
+        )
+
+    assert collision.read_text(encoding="utf-8") == "keep"
+    assert (target_parent / "module.py").read_text(encoding="utf-8") == "VALUE = 1\n"
+    manager.cleanup(handle)
 
 
 def test_repeated_preparation_has_deterministic_manifest(tmp_path: Path) -> None:
