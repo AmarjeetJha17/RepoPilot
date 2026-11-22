@@ -70,7 +70,7 @@ permanently denied capabilities cannot be escalated by approval.
 
 `DefaultPolicyEngine` currently performs read-only canonical and symlink-aware path checks against
 synthetic test fixtures. These checks are not race-free and do not perform filesystem operations.
-Any future read/write tool must revalidate the actual target immediately before use with suitable
+Any read/write handler must revalidate the actual target immediately before use with suitable
 filesystem-level protections; policy decisions alone do not secure execution.
 
 The Phase 4.1 `WorkspaceManager` is a separate trusted application component. It opens each source
@@ -125,6 +125,7 @@ Rootless Docker offers defense in depth but does not eliminate kernel or contain
 - Every proposed call is parsed against a strict tool-specific schema and authorized by deterministic code.
 - `ToolRegistry` performs name and argument-schema validation only. Authorization remains with `PolicyEngine`, human approval remains separate, and this registry does not dispatch or execute tools.
 - `AgentOrchestrator` validates each proposed call and evaluates policy for each valid call; `ALLOW` records an authorized proposal only. It does not dispatch tools, create `ToolResult` values, or treat model output as approval.
+- `ReadOnlyToolDispatcher` is a separate trusted application component for exactly four allowlisted read operations. It requires a registry-validated call, exact trusted tool metadata, an active handle owned by the supplied manager, a staging-root and identity match in `AuthorizationContext`, a fresh correlated policy decision, and a second workspace/schema/resource check before calling one fixed handler. The dispatcher is not wired into `AgentOrchestrator`.
 - The current orchestration cycle is limited to one provider request and does not preserve OpenAI reasoning continuation state. Unsupported continuation remains an explicit provider error; do not simulate it by dropping opaque state.
 - Runtime events are bounded in memory and contain typed metadata only; prompts, response bodies, tool arguments, and file contents are excluded. Dropped events are counted in the run result.
 - Cancellation propagates without retry and returns a content-minimized `CANCELLED` run snapshot when the run has started. This loop creates no background tasks, subprocesses, containers, or filesystem changes and makes no cleanup or rollback guarantee for future execution systems.
@@ -164,19 +165,45 @@ returned content as untrusted repository data and must not log or transmit it by
 indexing parses syntax only; it does not import or execute inspected code, evaluate decorators or
 annotations, resolve symbols, or establish correctness. Descriptor-relative revalidation reduces
 TOCTOU risk; it is not a claim of full protection from a concurrent process running as the same OS
-user. Intelligence results are not authorization and are not registered as model-executable tools.
-Any later execution or write path must independently authorize and revalidate its target. Limits are
+user. Intelligence results are not authorization. Read-only schemas may be proposed to a provider,
+but `AgentOrchestrator` does not dispatch them. Any later execution or write path must independently
+authorize and revalidate its target. Limits are
 defaults controlled by trusted application configuration; configured values must remain finite and
 bounded.
 
-## 11. Vulnerability reporting
+## 11. Read-only tool execution
+
+The dispatcher registers only `repo_discover_files`, `repo_read_text`, `repo_search_literal`, and
+`repo_index_python`. Discovery is authorized against the fixed staged root and filters every
+returned path through trusted sensitive-resource patterns. Reads use one file path; search and
+indexing require explicit per-file lists, so a model cannot turn those calls into a directory-wide
+scan. Tool arguments cannot choose capabilities, workspace roots, or a broader dispatch allowlist.
+The dispatcher does not consume caller-supplied policy results: it invokes the trusted policy engine
+for every call, requires a matching `ALLOW`, and never executes on `DENY` or `REQUIRE_APPROVAL`.
+
+Strict argument ceilings are: discovery 5,000 entries / 100 files / depth 8; file reads 1 MB input,
+8 KB returned and 100 lines; search 20 files / 256 KB scanned / 20 matches; and indexing 20 Python
+files / 2 MB / 20,000 AST nodes per file / 100 symbols. Structured results default to 16 KB and 100
+items, with trusted hard ceilings of 32 KB and 100 items. A configured dispatcher call budget is 5
+seconds by default, with a 30-second maximum. Since handlers use synchronous filesystem operations,
+the time budget is checked before and after execution and cannot interrupt a blocked operation.
+Cancellation prevents a not-yet-started call and stops later batch calls; it cannot stop a read
+already in progress. After an in-progress read returns under cancellation, its payload is discarded
+and the result reports that execution occurred.
+
+Results contain bounded actual handler output and safe metadata; raw arguments and content are never
+logged. A successful read is not independent verification and does not mark an agent run complete.
+The dispatcher does not forward results to OpenAI or another provider. Future model-context export
+needs a separate disclosure and redaction policy because credential filtering is best-effort.
+
+## 12. Vulnerability reporting
 Until a dedicated private security channel exists, **do not post exploit details or credentials in public GitHub issues**. Maintainers should add GitHub private vulnerability reporting in repository Security settings and replace this section with verified private-report instructions before the first public release. Never invent a security email address.
 
-## 12. Incident response
+## 13. Incident response
 1. Stop the agent, revoke affected credentials externally, and stop related sandbox containers.
 2. Preserve redacted audit metadata and relevant hashes; do not publish compromised data.
 3. Reproduce in isolated fixture, classify affected versions and paths.
 4. Patch, add regression test, release advisory and rotate tokens as appropriate.
 
-## 13. Deployment note
+## 14. Deployment note
 **Do not interpret this document as proof that all controls are implemented.** Every control must be verified by tests; disable unsafe capabilities until controls exist. Security configuration drift is release-blocking.

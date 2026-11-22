@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from repopilot.context.models import IntelligenceError, IntelligenceErrorCode, IntelligenceLimits
+from repopilot.context.reader import decode_text
 from repopilot.context.symbols import extract_symbols
 
 pytestmark = pytest.mark.unit
@@ -62,6 +63,15 @@ def test_syntax_errors_and_ast_node_limits_are_safe_domain_errors() -> None:
         extract_symbols("large.py", "value = [1, 2, 3]\n", max_nodes=2)
     assert node_error.value.code is IntelligenceErrorCode.AST_LIMIT_EXCEEDED
     assert "large.py" not in str(node_error.value)
+
+
+def test_partial_utf8_tolerates_only_a_truncated_terminal_codepoint() -> None:
+    assert decode_text("file.txt", b"valid\xe2\x82", partial=True) == "valid"
+
+    with pytest.raises(IntelligenceError) as malformed:
+        decode_text("file.txt", b"valid\xff", partial=True)
+
+    assert malformed.value.code is IntelligenceErrorCode.INVALID_ENCODING
 
 
 @pytest.mark.parametrize(

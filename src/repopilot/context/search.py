@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
+from pathlib import PurePosixPath
 
-from repopilot.context._support import safe_limit, translate_workspace_error
+from repopilot.context._support import relative_path, safe_limit, translate_workspace_error
 from repopilot.context.discovery import discover_files
 from repopilot.context.models import (
+    DiscoveredFile,
     IntelligenceError,
     IntelligenceErrorCode,
     IntelligenceLimits,
@@ -28,6 +31,7 @@ def search_literal(
     max_files: int | None = None,
     max_bytes: int | None = None,
     max_matches: int | None = None,
+    paths: Sequence[str] | None = None,
 ) -> SearchResult:
     if (
         not isinstance(query, str)
@@ -40,19 +44,24 @@ def search_literal(
     file_limit = safe_limit(max_files, limits.max_search_files)
     byte_limit = safe_limit(max_bytes, limits.max_search_bytes)
     match_limit = safe_limit(max_matches, limits.max_matches)
-    inventory = discover_files(
-        access,
-        limits,
-        suffixes=suffixes,
-        max_files=file_limit,
-    )
+    if paths is None:
+        inventory = discover_files(access, limits, suffixes=suffixes, max_files=file_limit)
+        files = inventory.files
+        truncated = inventory.truncated
+    else:
+        selected = sorted({relative_path(path) for path in paths})
+        if suffixes is not None:
+            selected = [
+                path for path in selected if PurePosixPath(path).suffix.casefold() in suffixes
+            ]
+        truncated = len(selected) > file_limit
+        files = tuple(DiscoveredFile(path, 0) for path in selected[:file_limit])
     matches: list[SearchMatch] = []
     files_scanned = bytes_scanned = files_skipped = 0
-    truncated = inventory.truncated
     stop = False
     pattern = re.compile(re.escape(query), 0 if case_sensitive else re.IGNORECASE)
 
-    for item in inventory.files:
+    for item in files:
         remaining = byte_limit - bytes_scanned
         if remaining <= 0:
             truncated = True

@@ -66,7 +66,7 @@ def decode_text(path: str, content: bytes, *, partial: bool = False) -> str:
     try:
         return content.decode("utf-8", errors="strict")
     except UnicodeDecodeError as error:
-        if partial and error.end == len(content):
+        if partial and error.reason == "unexpected end of data" and error.end == len(content):
             return content.decode("utf-8", errors="ignore")
         raise IntelligenceError(IntelligenceErrorCode.INVALID_ENCODING) from error
 
@@ -81,6 +81,7 @@ def read_text(
     end_line: int | None = None,
     max_bytes: int | None = None,
     max_lines: int | None = None,
+    max_file_bytes: int | None = None,
 ) -> TextReadResult:
     safe_path = relative_path(path)
     if type(start_line) is not int or start_line < 1:
@@ -89,10 +90,11 @@ def read_text(
         raise IntelligenceError(IntelligenceErrorCode.INVALID_RANGE)
     byte_limit = safe_limit(max_bytes, limits.max_read_bytes)
     line_limit = safe_limit(max_lines, limits.max_read_lines)
+    input_limit = safe_limit(max_file_bytes, min(limits.max_file_bytes, access.max_file_bytes))
     text, content = read_full_text(
         access,
         safe_path,
-        max_bytes=min(limits.max_file_bytes, access.max_file_bytes),
+        max_bytes=input_limit,
     )
     lines = text.splitlines(keepends=True)
     requested_end = len(lines) + 1 if end_line is None else min(end_line, len(lines) + 1)

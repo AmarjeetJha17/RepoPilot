@@ -48,6 +48,12 @@ not silently treated as verified by Windows skips. Tests must assert that source
 unchanged, malformed/binary inputs return safe results, and diagnostics disclose neither host
 paths nor file contents.
 
+The fixed read-only dispatcher has portable argument/allowlist tests plus Linux-only integration and
+security tests under the corresponding directories. CI explicitly runs its integration/security
+targets on Ubuntu. Those tests must prove real staged reads on `ALLOW`, no handler invocation on
+denial/approval/cancellation, exact workspace ownership, path-scoped policy, bounded result bytes,
+and no provider/network/subprocess use. Native Windows skips do not verify workspace execution.
+
 ## 4. Test conventions
 - Use **pytest** fixtures, parametrization, and named assertions.
 - Test behavior, errors, and state invariants—not implementation-specific prompt wording.

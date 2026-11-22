@@ -69,6 +69,10 @@ class WorkspaceReadAccess:
     def max_file_bytes(self) -> int:
         return self._manager._limits.max_file_bytes
 
+    def is_bound_to(self, manager: WorkspaceManager, handle: WorkspaceHandle) -> bool:
+        """Return whether this view belongs to the exact manager and handle objects."""
+        return self._manager is manager and self._handle is handle
+
     def list_directory(
         self, relative_path: str = "", *, max_entries: int
     ) -> WorkspaceDirectoryListing:
