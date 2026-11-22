@@ -42,7 +42,7 @@ def test_sensitive_file_denial_stops_before_handler_or_feedback(tmp_path: Path) 
     source, files = create_repository(tmp_path)
     env_file = source / ".env"
     env_file.write_text("API_KEY=synthetic-secret", encoding="utf-8")
-    source_before = {path: path.read_bytes() for path in files.values()}
+    source_before = {source / relative: content for relative, content in files.items()}
     source_before[env_file] = env_file.read_bytes()
     staging = tmp_path / "staging"
     staging.mkdir()
