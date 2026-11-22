@@ -1,5 +1,20 @@
 """Isolated workspace preparation and execution environment interfaces."""
 
+from repopilot.sandbox.docker_backend import DockerCliBackend
+from repopilot.sandbox.execution import (
+    BackendExecution,
+    CleanupStatus,
+    ContainerSpec,
+    ExecutionResult,
+    ExecutionStatus,
+    SandboxCleanupError,
+    SandboxConfig,
+    SandboxLimits,
+    SandboxRequest,
+    SandboxRunner,
+    SandboxUnsupportedError,
+    VerificationCommand,
+)
 from repopilot.sandbox.patches import (
     DiffPreview,
     FileChangeSummary,
@@ -40,12 +55,18 @@ from repopilot.sandbox.write_access import WorkspaceWriteAccess
 __all__ = [
     "BaselineFile",
     "BaselineManifest",
+    "BackendExecution",
+    "CleanupStatus",
+    "ContainerSpec",
+    "DockerCliBackend",
     "DiffPreview",
     "FileChangeSummary",
     "FileReplacement",
     "IntegrityChange",
     "IntegrityChangeKind",
     "IntegrityReport",
+    "ExecutionResult",
+    "ExecutionStatus",
     "WorkspaceCleanupState",
     "WorkspaceBytes",
     "WorkspaceDirectoryListing",
@@ -59,6 +80,13 @@ __all__ = [
     "WorkspacePreparationStatus",
     "WorkspaceReadAccess",
     "WorkspaceWriteAccess",
+    "SandboxConfig",
+    "SandboxCleanupError",
+    "SandboxLimits",
+    "SandboxRequest",
+    "SandboxRunner",
+    "SandboxUnsupportedError",
+    "VerificationCommand",
     "PatchComparisonResult",
     "PatchError",
     "PatchFailure",

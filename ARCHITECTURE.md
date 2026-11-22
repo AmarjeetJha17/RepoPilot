@@ -112,7 +112,7 @@ repopilot/
 │   ├── context/{__init__.py,intelligence.py,discovery.py,reader.py,search.py,symbols.py,models.py}
 │   ├── tools/{__init__.py,registry.py,read.py,patch.py,git.py,test.py}
 │   ├── security/{__init__.py,policy.py,paths.py,redaction.py}
-│   ├── sandbox/{__init__.py,runner.py,workspace.py,read_access.py,write_access.py,patches.py}
+│   ├── sandbox/{__init__.py,execution.py,docker_backend.py,workspace.py,read_access.py,write_access.py,patches.py}
 │   ├── persistence/{__init__.py,models.py,db.py,repositories/}
 │   ├── evaluation/{__init__.py,runner.py,scoring.py,schemas.py}
 │   ├── observability/{__init__.py,tracing.py,logging.py}
@@ -245,6 +245,19 @@ It accepts complete UTF-8 replacements for existing baseline files only. Policy 
 private schema inaccessible to providers; it does not connect to the agent loop or dispatcher.
 Bounded unified diffs are previews against manager-retained baseline bytes, not evidence of applying
 changes to a live repository.
+
+Phase 4.5 adds `sandbox/execution.py` and `sandbox/docker_backend.py` for policy-gated execution of
+only the fixed Python syntax and pytest command families. `SandboxRunner` requires the exact active
+manager-owned staging handle and `SANDBOXED_TEST_EXECUTION` authorization, checks staging integrity
+before container creation and again before start, and returns a bounded structured result. The
+Docker CLI backend accepts only a digest-pinned configured image, the local default Unix-socket
+context, same-user rootless daemon, read-only staging, no network, a read-only root filesystem,
+dropped capabilities, no-new-privileges, bounded tmpfs/resources, and fixed arguments. It never pulls images, mounts the
+source tree, exposes credentials or the Docker socket to the container, or executes arbitrary
+model-provided commands. The image must already contain Python and, for pytest, its dependencies.
+Container path binding is pathname-based; manager revalidation reduces but cannot eliminate a
+same-user replacement race between the final check and Docker Engine resolving the bind mount.
+This runner is not exposed through the agent loop or CLI.
 
 Detailed threat model: [SECURITY.md](SECURITY.md).
 

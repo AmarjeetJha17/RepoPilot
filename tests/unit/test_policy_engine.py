@@ -166,6 +166,8 @@ def test_staged_mutation_is_limited_to_staging_workspace(tmp_path: Path) -> None
 
 
 def test_sandbox_test_capability_requires_sandbox_workspace(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
     definition = _definition(Capability.SANDBOXED_TEST_EXECUTION)
     allowed = frozenset({Capability.SANDBOXED_TEST_EXECUTION})
     source_result = _engine(definition).authorize(
