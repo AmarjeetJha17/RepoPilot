@@ -77,7 +77,8 @@ Other isolation properties are configuration inspection only, not enforcement te
 The harness does not independently verify a coding-task patch.
 
 Before start, bounded Docker inspection checks network none, read-only rootfs and
-the sole read-only workspace mount, dropped capabilities, no-new-privileges,
+the sole recursively read-only workspace mount with `rprivate` propagation,
+dropped capabilities, no-new-privileges,
 memory/CPU/PID limits, bounded tmpfs and an environment-name allowlist. Image
 entrypoints are overridden by the fixed Python entrypoint; health checks are disabled.
 Host home and daemon sockets are not mounted. Command completion uses inspected

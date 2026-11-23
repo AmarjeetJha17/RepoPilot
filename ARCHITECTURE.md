@@ -301,7 +301,8 @@ manager-owned staging handle and `SANDBOXED_TEST_EXECUTION` authorization, check
 before container creation and again before start, and returns a bounded structured result. The
 Docker CLI backend accepts only a digest-pinned configured image, the trusted operator-selected
 `default` or `rootless` context after confirming its local same-user Unix socket, same-user
-rootless daemon, read-only staging, no network, a read-only root filesystem,
+rootless daemon, recursively read-only staging with `rprivate` propagation, no network, a read-only
+root filesystem,
 dropped capabilities, no-new-privileges, bounded tmpfs/resources, and fixed arguments. It never pulls images, mounts the
 source tree, exposes credentials or the Docker socket to the container, or executes arbitrary
 model-provided commands. The image must already contain Python and, for pytest, its dependencies.

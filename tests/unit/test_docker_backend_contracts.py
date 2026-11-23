@@ -60,8 +60,10 @@ def test_create_uses_selected_context_and_restrictive_flags(
     assert "--cap-drop=ALL" in captured
     assert "--security-opt=no-new-privileges:true" in captured
     mount = captured[captured.index("--mount") + 1]
-    assert f"source={staging}" in mount
-    assert "target=/workspace,readonly,bind-recursive=readonly" in mount
+    assert mount == (
+        f"type=bind,source={staging},target=/workspace,readonly,"
+        "bind-recursive=readonly,bind-propagation=rprivate"
+    )
     assert captured[captured.index("--user") + 1] == "0:0"
     assert str(tmp_path) not in " ".join(captured).replace(str(staging), "")
     assert "--privileged" not in captured
