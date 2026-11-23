@@ -163,8 +163,9 @@ again before container start. Changed baseline files are allowed, while unexpect
 symlinked, or structurally changed entries fail closed.
 
 The Docker backend uses an explicitly configured `name@sha256:<digest>` image, never pulls it, and
-requires the local default context to resolve to a Unix socket owned by the same non-root user as
-the staging directory, plus a rootless daemon. In rootless mode the container runs as namespace
+accepts only the operator-selected `default` or `rootless` context after verifying that the selected
+context resolves to a Unix socket owned by the same non-root user as the staging directory and a
+rootless daemon. In rootless mode the container runs as namespace
 UID 0, which maps to that unprivileged host account; all capabilities are dropped and no-new-privileges
 is enabled. Rootful user-namespace remapping is currently refused because owner-only staging-file
 access has not been safely mapped for it. The backend applies `--network=none`, read-only root and
@@ -318,7 +319,9 @@ Until a dedicated private security channel exists, **do not post exploit details
 
 ## Phase 5.1 operational verification
 
-The concrete backend requires rootless cgroup v2/systemd, a same-user local socket,
+The concrete backend permits only the operator-selected `default` or `rootless`
+Docker context and verifies that its endpoint is a same-user local Unix socket.
+It requires rootless cgroup v2/systemd,
 seccomp and a locally available reviewed digest. It overrides image entrypoints,
 disables health checks and inspects the actual isolation configuration before
 start. Cleanup accepts only this instance's registered IDs and matching labels.

@@ -13,6 +13,7 @@ from tempfile import TemporaryDirectory
 
 from repopilot.sandbox.docker_backend import (
     DockerCliBackend,
+    DockerContext,
     ReadinessStatus,
     diagnose_docker,
 )
@@ -52,12 +53,21 @@ def test_readonly():
 """
 
 
-async def verify(config: SandboxConfig, *, smoke: bool) -> dict[str, object]:
+async def verify(
+    config: SandboxConfig,
+    *,
+    smoke: bool,
+    docker_context: DockerContext,
+) -> dict[str, object]:
     """Create only disposable fixtures; return safe metadata without subprocess output."""
     with TemporaryDirectory(prefix="repopilot-docker-verification-") as temporary:
         root = Path(temporary)
-        readiness = await diagnose_docker(config, root)
-        report: dict[str, object] = {"preflight": asdict(readiness), "real_tests": "NOT_RUN"}
+        readiness = await diagnose_docker(config, root, docker_context=docker_context)
+        report: dict[str, object] = {
+            "docker_context": docker_context.value,
+            "preflight": asdict(readiness),
+            "real_tests": "NOT_RUN",
+        }
         if readiness.status is not ReadinessStatus.READY or not smoke:
             return report
         scenarios = (
@@ -119,7 +129,7 @@ async def verify(config: SandboxConfig, *, smoke: bool) -> dict[str, object]:
                     handle,
                     authorization,
                     config,
-                    DockerCliBackend(),
+                    DockerCliBackend(docker_context),
                     limits=SandboxLimits(timeout_seconds=timeout),
                 )
                 result = await runner.run(SandboxRequest(command, ("check.py",)))
@@ -170,6 +180,12 @@ def main() -> int:
     parser.add_argument(
         "--smoke", action="store_true", help="Explicitly create synthetic containers"
     )
+    parser.add_argument(
+        "--docker-context",
+        choices=[context.value for context in DockerContext],
+        default=DockerContext.DEFAULT.value,
+        help="Trusted local Docker context (default: default)",
+    )
     args = parser.parse_args()
     try:
         config = SandboxConfig(args.image)
@@ -179,7 +195,13 @@ def main() -> int:
                 "real_tests": "NOT_RUN",
             }
         else:
-            report = asyncio.run(verify(config, smoke=args.smoke))
+            report = asyncio.run(
+                verify(
+                    config,
+                    smoke=args.smoke,
+                    docker_context=DockerContext(args.docker_context),
+                )
+            )
     except (ValueError, OSError, RuntimeError, WorkspaceError):
         report = {
             "preflight": {"status": "NOT_READY", "reason": "verification_unavailable"},

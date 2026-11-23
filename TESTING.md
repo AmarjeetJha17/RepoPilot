@@ -211,5 +211,7 @@ and preserve inspected command exit codes. Existing fake runner tests continue
 to check policy, timeouts and cleanup on Linux. They are not real isolation proof.
 The manual [smoke harness](docs/docker-verification.md) checks six synthetic cases
 with a pre-provisioned rootless daemon and reviewed image; ordinary PR CI does
-not invoke it. Real Docker is NOT_RUN on the Windows development host. Native
+not invoke it. The harness defaults to the trusted `default` Docker context and
+supports explicit operator selection of `rootless`; it rejects other context
+names and remote or environment-overridden endpoints. Real Docker is NOT_RUN on the Windows development host. Native
 Windows skips never count as Linux boundary verification.

@@ -7,11 +7,13 @@ offline contracts only. No approved verification-image digest is bundled.
 ## Prerequisites and image provisioning
 
 Use a controlled Linux host as a non-root user with a separately provisioned,
-patched rootless Docker Engine. Verify its default context points at that user's
-local Unix socket. This project deliberately refuses endpoint environment
-overrides and remote contexts. Modern Docker rootless installations normally use
-a context named `rootless`; the operator must separately arrange and inspect a
-compatible default context. The harness does not change contexts or configuration.
+patched rootless Docker Engine. The operator may select the existing `default`
+context (the backward-compatible default) or explicitly select `rootless`. The
+selected context must resolve to that user's local Unix socket; RepoPilot checks
+the selected context's endpoint, socket ownership, rootless mode, seccomp, and
+resource controllers. Other context names, remote endpoints, and Docker endpoint
+environment overrides are rejected. The harness never changes contexts or Docker
+configuration.
 
 Require cgroup v2 with the systemd cgroup driver and delegated memory, CPU and PID
 controllers. Otherwise Docker rootless limits can be ignored. Require active
@@ -31,18 +33,28 @@ separately from RepoPilot, then record its registry `RepoDigests` identity. Loca
 build-only images without a repository digest are refused. The runner never builds,
 pulls or installs packages. Do not substitute a mutable tag for the digest.
 
-Set `APPROVED_IMAGE` in the Linux shell to the actual reviewed
+Set `DOCKER_CONTEXT_NAME` in the Linux shell to `default` or `rootless`. For the
+WSL2 layout where the default points to an unavailable socket, set it to
+`rootless`. The context name is an operator argument; repository files and model
+output cannot select it. Set `APPROVED_IMAGE` to the actual reviewed
 `registry/repository@sha256:<64 hexadecimal digits>` reference. The examples below
-use that operator-supplied variable; no example digest is represented as approved.
+use these operator-supplied values; no example digest is represented as approved.
+
+For the WSL2 rootless setup, the explicit option is:
 
 ```bash
-docker --context default version
-docker --context default context inspect default
-docker --context default info
-docker --context default image inspect "$APPROVED_IMAGE"
+uv run python scripts/verify_docker_sandbox.py --image "$APPROVED_IMAGE" --docker-context rootless
+uv run python scripts/verify_docker_sandbox.py --image "$APPROVED_IMAGE" --docker-context rootless --smoke
+```
+
+```bash
+docker --context "$DOCKER_CONTEXT_NAME" version
+docker --context "$DOCKER_CONTEXT_NAME" context inspect "$DOCKER_CONTEXT_NAME"
+docker --context "$DOCKER_CONTEXT_NAME" info
+docker --context "$DOCKER_CONTEXT_NAME" image inspect "$APPROVED_IMAGE"
 uv sync --frozen
-uv run python scripts/verify_docker_sandbox.py --image "$APPROVED_IMAGE"
-uv run python scripts/verify_docker_sandbox.py --image "$APPROVED_IMAGE" --smoke
+uv run python scripts/verify_docker_sandbox.py --image "$APPROVED_IMAGE" --docker-context "$DOCKER_CONTEXT_NAME"
+uv run python scripts/verify_docker_sandbox.py --image "$APPROVED_IMAGE" --docker-context "$DOCKER_CONTEXT_NAME" --smoke
 ```
 
 The first script invocation is read-only: no containers are created. It reports
@@ -82,7 +94,7 @@ image after infrastructure changes.
 Verify no smoke containers remain with:
 
 ```bash
-docker --context default ps --all --filter label=org.repopilot.execution
+docker --context "$DOCKER_CONTEXT_NAME" ps --all --filter label=org.repopilot.execution
 ```
 
 If Docker becomes unreachable, cleanup cannot be guaranteed. Restore access and

@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from repopilot.sandbox import docker_backend
 from repopilot.sandbox.docker_backend import DockerCliBackend
 from repopilot.sandbox.execution import ContainerSpec, SandboxLimits
 
 
-def test_create_uses_only_the_owned_staging_mount_and_restrictive_flags(
-    monkeypatch, tmp_path: Path
+@pytest.mark.parametrize("context", ["default", "rootless"])
+def test_create_uses_selected_context_and_restrictive_flags(
+    monkeypatch, tmp_path: Path, context: str
 ) -> None:
     for name in ("DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"):
         monkeypatch.delenv(name, raising=False)
@@ -47,9 +50,10 @@ def test_create_uses_only_the_owned_staging_mount_and_restrictive_flags(
         limits=SandboxLimits(),
     )
 
-    container_id = _run_immediate(DockerCliBackend().create(spec))
+    container_id = _run_immediate(DockerCliBackend(docker_context=context).create(spec))
 
     assert container_id == "a" * 64
+    assert captured[:3] == ["docker", "--context", context]
     assert "--pull=never" in captured
     assert "--network=none" in captured
     assert "--read-only" in captured
@@ -63,17 +67,39 @@ def test_create_uses_only_the_owned_staging_mount_and_restrictive_flags(
     assert "--privileged" not in captured
 
 
-def test_remote_docker_environment_fails_closed(monkeypatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "name", ["DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"]
+)
+def test_docker_environment_overrides_fail_closed(monkeypatch, tmp_path: Path, name: str) -> None:
     monkeypatch.setattr(docker_backend.sys, "platform", "linux")
-    monkeypatch.setenv("DOCKER_HOST", "tcp://example.invalid:2376")
+    monkeypatch.setenv(name, "untrusted-override")
 
-    backend = DockerCliBackend()
+    backend = DockerCliBackend(docker_context="rootless")
     try:
         backend._validate_host_environment(tmp_path)
     except RuntimeError as error:
         assert "Remote or overridden" in str(error)
     else:
         raise AssertionError("A remote Docker endpoint must be rejected.")
+
+
+def test_backend_rejects_unknown_context_names() -> None:
+    try:
+        DockerCliBackend(docker_context="unreviewed")
+    except ValueError as error:
+        assert "Unsupported Docker context" in str(error)
+    else:
+        raise AssertionError("Unreviewed contexts must not be accepted.")
+
+
+def test_selected_context_cannot_be_reassigned_after_backend_creation() -> None:
+    backend = DockerCliBackend(docker_context="rootless")
+    try:
+        backend.docker_context = docker_backend.DockerContext.DEFAULT
+    except AttributeError:
+        pass
+    else:
+        raise AssertionError("A backend context must remain fixed for its lifecycle.")
 
 
 def _run_immediate(coroutine):

@@ -81,8 +81,25 @@ def test_cleanup_does_not_delete_unowned_container():
     assert immediate(docker.DockerCliBackend().cleanup("a" * 64, 1)) is False
 
 
+def test_readiness_rejects_unapproved_context_without_docker_calls(monkeypatch):
+    def unexpected(*args, **kwargs):
+        raise AssertionError("Unapproved context must be rejected before Docker inspection.")
+
+    monkeypatch.setattr(docker, "_capture", unexpected)
+    result = immediate(
+        docker.diagnose_docker(
+            SandboxConfig(IMAGE), Path("private"), docker_context="remote-context"
+        )
+    )
+    assert result.status is docker.ReadinessStatus.NOT_READY
+    assert result.reason is docker.ReadinessReason.ENDPOINT
+
+
 @pytest.mark.parametrize("phase", ["host", "daemon", "image", "ready"])
-def test_readiness_uses_no_create_and_exposes_no_private_paths(monkeypatch, phase):
+@pytest.mark.parametrize("docker_context", ["default", "rootless"])
+def test_readiness_uses_selected_context_without_exposing_private_paths(
+    monkeypatch, phase, docker_context
+):
     monkeypatch.setattr(docker.sys, "platform", "linux")
     monkeypatch.setattr(docker.os, "getuid", lambda: 1000, raising=False)
     monkeypatch.setattr(docker.shutil, "which", lambda _: "/synthetic/docker")
@@ -91,22 +108,29 @@ def test_readiness_uses_no_create_and_exposes_no_private_paths(monkeypatch, phas
         if phase == "host":
             raise SandboxUnsupportedError("private path")
 
+    selected_contexts = []
+
     async def daemon(self, root):
+        selected_contexts.append(self.docker_context.value)
         if phase == "daemon":
             raise SandboxUnsupportedError("private path")
 
     async def image(self, ref):
+        selected_contexts.append(self.docker_context.value)
         if phase == "image":
             raise SandboxUnsupportedError("private path")
 
     monkeypatch.setattr(docker.DockerCliBackend, "_validate_host_environment", host)
     monkeypatch.setattr(docker.DockerCliBackend, "_verify_daemon", daemon)
     monkeypatch.setattr(docker.DockerCliBackend, "_verify_image", image)
-    result = immediate(docker.diagnose_docker(SandboxConfig(IMAGE), Path("private")))
+    result = immediate(
+        docker.diagnose_docker(SandboxConfig(IMAGE), Path("private"), docker_context=docker_context)
+    )
     assert result.status is (
         docker.ReadinessStatus.READY if phase == "ready" else docker.ReadinessStatus.NOT_READY
     )
     assert "private" not in repr(result)
+    assert all(context == docker_context for context in selected_contexts)
 
 
 @pytest.mark.parametrize(
@@ -168,17 +192,49 @@ def test_daemon_prerequisites_fail_closed(
     monkeypatch.setattr(docker.asyncio, "to_thread", fake_stat)
     monkeypatch.setattr(docker, "_capture", capture)
     if ready:
-        asyncio.run(docker.DockerCliBackend()._verify_daemon(tmp_path))
+        asyncio.run(docker.DockerCliBackend("rootless")._verify_daemon(tmp_path))
     else:
         with pytest.raises(SandboxUnsupportedError):
-            asyncio.run(docker.DockerCliBackend()._verify_daemon(tmp_path))
+            asyncio.run(docker.DockerCliBackend("rootless")._verify_daemon(tmp_path))
+
+
+def test_rootless_context_is_used_for_daemon_endpoint_and_info(monkeypatch, tmp_path):
+    monkeypatch.setattr(docker.os, "getuid", lambda: 1000, raising=False)
+    commands = []
+
+    async def fake_stat(fn):
+        if fn.__self__ == tmp_path:
+            return SimpleNamespace(st_uid=1000, st_mode=stat.S_IFDIR | 0o700)
+        return SimpleNamespace(st_uid=1000, st_mode=stat.S_IFSOCK | 0o600)
+
+    async def capture(argv, **kwargs):
+        commands.append(argv)
+        if argv[3] == "context":
+            assert argv[4:6] == ["inspect", "rootless"]
+            return b'"unix:///run/user/1000/docker.sock"', b""
+        if "{{json .SecurityOptions}}" in argv:
+            return b'["name=rootless", "name=seccomp,profile=builtin"]', b""
+        if "{{json .MemoryLimit}} {{json .CpuCfsQuota}} {{json .PidsLimit}}" in argv:
+            return b"true true true", b""
+        return b'"2" "systemd"', b""
+
+    monkeypatch.setattr(docker.asyncio, "to_thread", fake_stat)
+    monkeypatch.setattr(docker, "_capture", capture)
+    asyncio.run(docker.DockerCliBackend("rootless")._verify_daemon(tmp_path))
+
+    assert commands
+    assert all(command[:3] == ["docker", "--context", "rootless"] for command in commands)
 
 
 @pytest.mark.parametrize("exit_code", [0, 1, 2])
-def test_execute_inspects_container_exit_instead_of_client_exit(monkeypatch, tmp_path, exit_code):
-    backend = docker.DockerCliBackend()
+@pytest.mark.parametrize("context", ["default", "rootless"])
+def test_execute_uses_selected_context_and_inspects_container_exit(
+    monkeypatch, tmp_path, exit_code, context
+):
+    backend = docker.DockerCliBackend(context)
     identifier = "a" * 64
     backend._owned[identifier] = ContainerSpec("run", IMAGE, tmp_path, ("python",), SandboxLimits())
+    executed_argv = []
 
     class Stream:
         async def read(self, size):
@@ -192,6 +248,7 @@ def test_execute_inspects_container_exit_instead_of_client_exit(monkeypatch, tmp
             return 0
 
     async def spawn(*args, **kwargs):
+        executed_argv.extend(args)
         return Process()
 
     async def inspect(_id):
@@ -211,6 +268,7 @@ def test_execute_inspects_container_exit_instead_of_client_exit(monkeypatch, tmp
     monkeypatch.setattr(backend, "inspect_isolation", inspect)
     monkeypatch.setattr(backend, "_inspect_state", state)
     result = asyncio.run(backend.execute(identifier, 1, 1024))
+    assert executed_argv[:3] == ["docker", "--context", context]
     assert result.exit_code == exit_code
     assert result.real_container and result.isolation_inspected
 
@@ -244,6 +302,39 @@ def test_cleanup_label_mismatch_never_removes_container(monkeypatch, tmp_path):
 
     monkeypatch.setattr(docker, "_capture", capture)
     assert immediate(backend.cleanup(identifier, 1)) is False
+
+
+def test_image_state_isolation_and_cleanup_share_selected_context(monkeypatch, tmp_path):
+    backend = docker.DockerCliBackend("rootless")
+    identifier = "a" * 64
+    backend._owned[identifier] = ContainerSpec("run", IMAGE, tmp_path, ("python",), SandboxLimits())
+    commands = []
+
+    async def capture(argv, **kwargs):
+        commands.append(argv)
+        if "image" in argv:
+            return json.dumps([IMAGE]).encode(), b""
+        if "ps" in argv:
+            return b"", b""
+        if "--format" in argv:
+            fmt = argv[argv.index("--format") + 1]
+            if "Config.Labels" in fmt:
+                return b"run", b""
+            if ".State" in fmt:
+                return b'{"state":"inspected"}', b""
+            if ".HostConfig" in fmt:
+                return b"{}\n[]\n[]", b""
+        return b"", b""
+
+    monkeypatch.setattr(docker, "_capture", capture)
+    monkeypatch.setattr(docker, "_check_isolation", lambda *args: None)
+    immediate(backend._verify_image(IMAGE))
+    assert immediate(backend._inspect_state(identifier)) == {"state": "inspected"}
+    immediate(backend.inspect_isolation(identifier))
+    assert immediate(backend.cleanup(identifier, 1))
+
+    assert commands
+    assert all(command[:3] == ["docker", "--context", "rootless"] for command in commands)
 
 
 def test_partial_create_cancellation_attempts_owned_cleanup(monkeypatch, tmp_path):
