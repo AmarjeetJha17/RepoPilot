@@ -6,6 +6,7 @@ import ast
 import asyncio
 import hashlib
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -96,6 +97,7 @@ _REGRESSION_TEST = (
 )
 _BASELINE_SHA256 = "da214e37fc06312a82a27cfad0d6e027eeaa2589a25798bb0f4149307e120eb3"
 _MAX_DIFF_BYTES = 12_000
+_SAFE_REPORT_CALL_ID = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,7 +132,9 @@ class CodingTaskDemoReport:
 
     def to_json(self) -> str:
         """Serialize stable report fields without exposing host paths or raw model data."""
-        return json.dumps(asdict(self), ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        report = asdict(self)
+        report["tool_call_id"] = _safe_report_call_id(self.tool_call_id)
+        return json.dumps(report, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 
 
 class _CapturingMockProvider(MockModelProvider):
@@ -139,10 +143,13 @@ class _CapturingMockProvider(MockModelProvider):
     def __init__(self, outcomes: Sequence[ModelResponse | ModelProviderError]) -> None:
         super().__init__(outcomes)
         self.requests: list[ModelRequest] = []
+        self.responses: list[ModelResponse] = []
 
     async def next_action(self, request: ModelRequest) -> ModelResponse:
         self.requests.append(request)
-        return await super().next_action(request)
+        response = await super().next_action(request)
+        self.responses.append(response)
+        return response
 
 
 def _new_investigation_provider() -> _CapturingMockProvider:
@@ -314,6 +321,10 @@ def _record_investigation(
         and event.tool_name is not None
     )
     call_id = result.tool_results[0].call_id if result.tool_results else None
+    if call_id is None and provider.responses:
+        response = provider.responses[0]
+        if isinstance(response, ToolCallResponse) and response.tool_calls:
+            call_id = response.tool_calls[0].id
     tool_event = next(
         (event for event in result.events if event.event_type is MultiStepEventType.TOOL_RESULT),
         None,
@@ -329,7 +340,7 @@ def _record_investigation(
         outcome="cancelled" if cancelled else report.outcome,
         model_requests=result.budget_snapshot.model_requests,
         read_only_tools_executed=executed,
-        tool_call_id=call_id,
+        tool_call_id=_safe_report_call_id(call_id),
         tool_result_status=tool_status,
         feedback_correlated=correlated,
     )
@@ -596,6 +607,7 @@ def render_coding_task_demo(report: CodingTaskDemoReport) -> str:
         f"outcome: {report.outcome}",
         f"model_requests: {report.model_requests}",
         f"read_only_tools_executed: {','.join(report.read_only_tools_executed) or 'none'}",
+        f"tool_call_id: {_safe_report_call_id(report.tool_call_id) or 'none'}",
         f"tool_result_status: {report.tool_result_status}",
         f"feedback_correlated: {_bool(report.feedback_correlated)}",
         f"patch_provenance: {report.patch_provenance}",
@@ -626,3 +638,9 @@ def _bool(value: bool) -> str:
 
 def _optional_bool(value: bool | None) -> str:
     return "unknown" if value is None else _bool(value)
+
+
+def _safe_report_call_id(value: object) -> str | None:
+    if isinstance(value, str) and _SAFE_REPORT_CALL_ID.fullmatch(value):
+        return value
+    return None

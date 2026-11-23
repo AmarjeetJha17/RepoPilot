@@ -70,6 +70,21 @@ def test_denied_or_invalid_model_calls_never_reach_patch_staging(
     assert "unsafe-proposal-1" in rendered
 
 
+def test_malformed_proposal_id_is_not_echoed_in_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    call = ToolCall("unsafe-proposal-1\n.env", "not_registered", {})
+    monkeypatch.setattr(demo, "_new_investigation_provider", lambda: _provider_for_call(call))
+
+    result = asyncio.run(demo.run_coding_task_demo(temp_parent=tmp_path))
+    rendered = demo.render_coding_task_demo(result)
+
+    assert result.failure_code == "invalid_readonly_tool_call"
+    assert result.tool_call_id is None
+    assert "unsafe-proposal-1" not in rendered
+    assert ".env" not in rendered
+
+
 def test_model_text_cannot_change_the_fixture_supplied_patch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

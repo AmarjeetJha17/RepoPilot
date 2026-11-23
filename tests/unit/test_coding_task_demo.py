@@ -11,6 +11,7 @@ from repopilot.application.coding_task_demo import (
     CodingTaskDemoReport,
     _create_fixture,
     _source_is_unchanged,
+    render_coding_task_demo,
 )
 
 
@@ -29,6 +30,19 @@ def test_report_json_is_stable_and_does_not_add_machine_paths() -> None:
     assert str(Path.home()) not in first
     assert "synthetic_repository_id" in first
     assert '"independent_verification":false' in first
+
+
+def test_rendered_report_includes_safe_tool_call_id() -> None:
+    report = CodingTaskDemoReport(tool_call_id="unsafe-proposal-1")
+
+    assert "tool_call_id: unsafe-proposal-1" in render_coding_task_demo(report)
+
+
+def test_report_omits_malformed_tool_call_ids() -> None:
+    report = CodingTaskDemoReport(tool_call_id="call-1\n.env")
+
+    assert "tool_call_id: none" in render_coding_task_demo(report)
+    assert "call-1" not in report.to_json()
 
 
 def test_source_snapshot_detects_file_changes_and_unexpected_files(tmp_path: Path) -> None:
