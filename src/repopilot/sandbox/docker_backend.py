@@ -1,4 +1,4 @@
-"""Docker CLI backend with fixed flags, bounded streams, and owned cleanup."""
+"""Docker CLI backend with fixed flags, trusted local contexts, and owned cleanup."""
 
 from __future__ import annotations
 
@@ -27,20 +27,39 @@ _CONTAINER_ID = re.compile(r"^[a-f0-9]{64}$")
 _OUTPUT_CHUNK = 4096
 
 
-class DockerCliBackend:
-    """Use only the local default Docker context and fixed runner arguments."""
+class DockerContext(StrEnum):
+    """Operator-selected context names supported by the local sandbox backend."""
 
-    def __init__(self) -> None:
+    DEFAULT = "default"
+    ROOTLESS = "rootless"
+
+
+def _docker_command(context: DockerContext, *arguments: str) -> list[str]:
+    """Build a Docker argv with a validated, explicit local context."""
+    return ["docker", "--context", context.value, *arguments]
+
+
+class DockerCliBackend:
+    """Use a trusted local context and fixed runner arguments."""
+
+    def __init__(self, docker_context: DockerContext | str = DockerContext.DEFAULT) -> None:
+        try:
+            self._docker_context = DockerContext(docker_context)
+        except ValueError as error:
+            raise ValueError("Unsupported Docker context.") from error
         self._owned: dict[str, ContainerSpec] = {}
+
+    @property
+    def docker_context(self) -> DockerContext:
+        """Return the fixed context used for this backend's entire container lifecycle."""
+        return self._docker_context
 
     async def create(self, spec: ContainerSpec) -> str:
         self._validate_host_environment(spec.staging_root)
         await self._verify_daemon(spec.staging_root)
         await self._verify_image(spec.image)
-        argv = [
-            "docker",
-            "--context",
-            "default",
+        argv = _docker_command(
+            self.docker_context,
             "create",
             "--pull=never",
             "--name",
@@ -76,7 +95,7 @@ class DockerCliBackend:
             "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1",
             spec.image,
             *spec.argv[1:],
-        ]
+        )
         container_name = f"repopilot-{spec.execution_id}"
         try:
             stdout, _ = await _capture(argv, max_runtime=30)
@@ -112,12 +131,12 @@ class DockerCliBackend:
             raise ValueError("Container is not owned by this backend.")
         await self.inspect_isolation(container_id)
         process = await asyncio.create_subprocess_exec(
-            "docker",
-            "--context",
-            "default",
-            "start",
-            "--attach",
-            container_id,
+            *_docker_command(
+                self.docker_context,
+                "start",
+                "--attach",
+                container_id,
+            ),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=_docker_env(),
@@ -176,21 +195,19 @@ class DockerCliBackend:
         try:
             await self._verify_label(container_id)
             await _capture(
-                ["docker", "--context", "default", "rm", "--force", container_id],
+                _docker_command(self.docker_context, "rm", "--force", container_id),
                 max_runtime=max_runtime,
             )
             remaining, _ = await _capture(
-                [
-                    "docker",
-                    "--context",
-                    "default",
+                _docker_command(
+                    self.docker_context,
                     "ps",
                     "--all",
                     "--quiet",
                     "--no-trunc",
                     "--filter",
                     f"id={container_id}",
-                ],
+                ),
                 max_runtime=max_runtime,
             )
             if remaining.strip():
@@ -217,16 +234,14 @@ class DockerCliBackend:
 
     async def _verify_daemon(self, staging_root: Path) -> None:
         endpoint, _ = await _capture(
-            [
-                "docker",
-                "--context",
-                "default",
+            _docker_command(
+                self.docker_context,
                 "context",
                 "inspect",
-                "default",
+                self.docker_context.value,
                 "--format",
                 "{{json .Endpoints.docker.Host}}",
-            ],
+            ),
             max_runtime=10,
         )
         host = json.loads(endpoint.decode("utf-8", errors="strict"))
@@ -256,7 +271,7 @@ class DockerCliBackend:
         except OSError as error:
             raise SandboxUnsupportedError("Local rootless Docker socket is unavailable.") from error
         options, _ = await _capture(
-            ["docker", "--context", "default", "info", "--format", "{{json .SecurityOptions}}"],
+            _docker_command(self.docker_context, "info", "--format", "{{json .SecurityOptions}}"),
             max_runtime=15,
         )
         security_options = json.loads(options.decode("utf-8", errors="strict"))
@@ -277,27 +292,23 @@ class DockerCliBackend:
                 "Docker daemon does not report an active seccomp profile."
             )
         cgroups, _ = await _capture(
-            [
-                "docker",
-                "--context",
-                "default",
+            _docker_command(
+                self.docker_context,
                 "info",
                 "--format",
                 "{{json .CgroupVersion}} {{json .CgroupDriver}}",
-            ],
+            ),
             max_runtime=10,
         )
         if cgroups.strip() != b'"2" "systemd"':
             raise SandboxUnsupportedError("Rootless resource limits require cgroup v2/systemd.")
         features, _ = await _capture(
-            [
-                "docker",
-                "--context",
-                "default",
+            _docker_command(
+                self.docker_context,
                 "info",
                 "--format",
                 "{{json .MemoryLimit}} {{json .CpuCfsQuota}} {{json .PidsLimit}}",
-            ],
+            ),
             max_runtime=10,
         )
         if features.strip() != b"true true true":
@@ -307,17 +318,15 @@ class DockerCliBackend:
         """Remove only a uniquely named partial container with the exact owned label."""
         try:
             output, _ = await _capture(
-                [
-                    "docker",
-                    "--context",
-                    "default",
+                _docker_command(
+                    self.docker_context,
                     "ps",
                     "--all",
                     "--quiet",
                     "--no-trunc",
                     "--filter",
                     f"name=^/{container_name}$",
-                ],
+                ),
                 max_runtime=5,
             )
             container_id = output.decode("ascii", errors="strict").strip()
@@ -325,20 +334,18 @@ class DockerCliBackend:
                 return True
             _validate_id(container_id)
             label, _ = await _capture(
-                [
-                    "docker",
-                    "--context",
-                    "default",
+                _docker_command(
+                    self.docker_context,
                     "inspect",
                     "--format",
                     '{{ index .Config.Labels "org.repopilot.execution" }}',
                     container_id,
-                ],
+                ),
                 max_runtime=5,
             )
             if label.decode("ascii", errors="strict").strip() == execution_id:
                 await _capture(
-                    ["docker", "--context", "default", "rm", "--force", container_id],
+                    _docker_command(self.docker_context, "rm", "--force", container_id),
                     max_runtime=5,
                 )
             return True
@@ -348,16 +355,14 @@ class DockerCliBackend:
     async def _verify_image(self, image: str) -> None:
         SandboxConfig(image)
         output, _ = await _capture(
-            [
-                "docker",
-                "--context",
-                "default",
+            _docker_command(
+                self.docker_context,
                 "image",
                 "inspect",
                 "--format",
                 "{{json .RepoDigests}}",
                 image,
-            ],
+            ),
             max_runtime=10,
         )
         digests = json.loads(output)
@@ -367,15 +372,13 @@ class DockerCliBackend:
     async def _verify_label(self, container_id: str) -> None:
         spec = self._owned[container_id]
         output, _ = await _capture(
-            [
-                "docker",
-                "--context",
-                "default",
+            _docker_command(
+                self.docker_context,
                 "inspect",
                 "--format",
                 '{{ index .Config.Labels "org.repopilot.execution" }}',
                 container_id,
-            ],
+            ),
             max_runtime=5,
         )
         if output.decode("ascii").strip() != spec.execution_id:
@@ -384,15 +387,13 @@ class DockerCliBackend:
     async def _inspect_state(self, container_id: str) -> object:
         await self._verify_label(container_id)
         output, _ = await _capture(
-            [
-                "docker",
-                "--context",
-                "default",
+            _docker_command(
+                self.docker_context,
                 "inspect",
                 "--format",
                 "{{json .State}}",
                 container_id,
-            ],
+            ),
             max_runtime=5,
         )
         return json.loads(output)
@@ -404,15 +405,13 @@ class DockerCliBackend:
             raise ValueError("Container is not owned by this backend.")
         await self._verify_label(container_id)
         output, _ = await _capture(
-            [
-                "docker",
-                "--context",
-                "default",
+            _docker_command(
+                self.docker_context,
                 "inspect",
                 "--format",
                 "{{json .HostConfig}}\n{{json .Mounts}}\n{{json .Config.Env}}",
                 container_id,
-            ],
+            ),
             max_runtime=5,
         )
         lines = output.splitlines()
@@ -583,9 +582,17 @@ class DockerReadiness:
     image_digest: str | None = None
 
 
-async def diagnose_docker(config: SandboxConfig, staging_root: Path) -> DockerReadiness:
+async def diagnose_docker(
+    config: SandboxConfig,
+    staging_root: Path,
+    *,
+    docker_context: DockerContext | str = DockerContext.DEFAULT,
+) -> DockerReadiness:
     """Inspect only the configured local environment and image, without creating containers."""
-    backend = DockerCliBackend()
+    try:
+        backend = DockerCliBackend(docker_context)
+    except ValueError:
+        return DockerReadiness(ReadinessStatus.NOT_READY, ReadinessReason.ENDPOINT)
     phase = ReadinessReason.STAGING
     try:
         if not sys.platform.startswith("linux"):
