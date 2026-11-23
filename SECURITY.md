@@ -289,6 +289,21 @@ not fit. Model responses, including text claiming success, do not create verific
 mark a run complete. This workflow does not write staged/source files or run commands, Docker, or
 Git operations.
 
+Phase 4.8's offline coding-task demonstration is a trusted application composition over the
+existing contracts, not a model-controlled patch workflow. It creates a new synthetic repository
+in a disposable temporary directory, supplies bounded read-only authorization for the investigation,
+and only selects fixture-authored patch bytes after the expected successful read and correlated tool
+feedback. The fixture correction is staged under a separate `STAGED_FILE_MODIFICATION` capability;
+the model's text cannot select paths or patch contents. The source fixture is hashed before and
+after, the manager-owned workspace is cleaned up, and no live application or approval receipt path
+is used. The default demonstration executes no shell command, network request, or Docker process.
+
+Static syntax and fixture assertions are not independent verification. Optional verification uses
+the existing `SandboxRunner` only with a digest-pinned operator-supplied image and the configured
+rootless Docker backend. An unavailable or misconfigured runtime is reported as `NOT_RUN` or an
+infrastructure error, never as a test pass. A fake-backend test does not establish real container
+isolation.
+
 ## 12. Vulnerability reporting
 Until a dedicated private security channel exists, **do not post exploit details or credentials in public GitHub issues**. Maintainers should add GitHub private vulnerability reporting in repository Security settings and replace this section with verified private-report instructions before the first public release. Never invent a security email address.
 

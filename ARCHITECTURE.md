@@ -200,6 +200,16 @@ or `FAILED` for provider/dispatcher failures. Read-only work
 does not stage or apply changes, run Docker or shell commands, create independent verification
 evidence, or mark a run complete.
 
+Phase 4.8 adds `application.coding_task_demo` as a deterministic composition example, not a new
+agent capability. It builds a synthetic repository inside a fresh temporary directory, runs the
+existing multi-step orchestrator with two scripted mock responses and the real read-only dispatcher,
+then selects a fixed fixture patch only after the expected read result and correlated feedback are
+observed. It stages that correction through `PatchStager` under a separate modification capability,
+checks the staged diff and source integrity, and reports static/fixture checks separately from
+independent verification. Docker tests remain opt-in and require an operator-supplied digest-pinned
+image and working rootless Docker environment; the default path does not invoke Docker. No changes
+are applied to a live repository.
+
 ## 7. Execution sequence
 ```mermaid
 sequenceDiagram
