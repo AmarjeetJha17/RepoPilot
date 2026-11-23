@@ -103,6 +103,9 @@ def test_authorized_execution_uses_read_only_staging_and_cleans_owned_container(
         )
 
         assert result.status is ExecutionStatus.PASSED
+        assert result.real_container is False
+        assert result.isolation_inspected is False
+        assert result.image_digest is None
         assert result.cleanup is CleanupStatus.REMOVED
         assert backend.cleaned == ["a" * 64]
         assert backend.spec is not None
@@ -180,6 +183,39 @@ def test_runtime_timeout_cleans_the_owned_container(tmp_path: Path) -> None:
 
         assert result.status is ExecutionStatus.TIMED_OUT
         assert result.cleanup is CleanupStatus.REMOVED
+        assert backend.cleaned == ["a" * 64]
+    finally:
+        manager.cleanup(handle)
+
+
+def test_external_cancellation_drains_execution_with_event_and_cleans_container(
+    tmp_path: Path,
+) -> None:
+    entered = asyncio.Event()
+
+    class WaitingBackend(FakeBackend):
+        async def execute(self, container_id, max_runtime, output_limit):
+            entered.set()
+            await asyncio.Event().wait()
+
+    backend = WaitingBackend()
+    manager, handle, runner, _ = _runner(tmp_path, backend)
+
+    async def scenario():
+        task = asyncio.create_task(
+            runner.run(
+                SandboxRequest(VerificationCommand.PYTEST, ("module.py",)),
+                cancellation=asyncio.Event(),
+            )
+        )
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+
+    try:
+        asyncio.run(scenario())
         assert backend.cleaned == ["a" * 64]
     finally:
         manager.cleanup(handle)

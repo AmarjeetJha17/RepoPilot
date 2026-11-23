@@ -232,3 +232,10 @@ The initial workflow is a single Ubuntu/Python 3.12 job. It does not yet run a
 Windows matrix, Docker sandbox smoke tests, live-model evaluations, or enforce a
 coverage threshold. Workflow behavior still needs confirmation on GitHub after
 the repository is pushed.
+
+## Real Docker verification (Phase 5.1)
+
+See [the controlled Linux workflow](docs/docker-verification.md) for image review,
+read-only readiness diagnostics and the explicit synthetic smoke command. Real
+Docker verification is NOT_RUN in the Windows development session; ordinary CI
+passes only offline contracts. No approved image digest is shipped.

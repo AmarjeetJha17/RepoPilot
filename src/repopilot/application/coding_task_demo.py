@@ -530,12 +530,13 @@ async def _run_sandbox_tests(
     except (OSError, RuntimeError):
         return replace(report, sandbox_status="infrastructure_error", sandbox_tests="NOT_RUN")
     if result.status is ExecutionStatus.PASSED and result.exit_code == 0:
+        independently_verified = result.real_container and result.isolation_inspected
         return replace(
             report,
-            outcome="verified",
+            outcome="verified" if independently_verified else "sandbox_passed",
             sandbox_status=result.status.value,
             sandbox_tests="PASS",
-            independent_verification=True,
+            independent_verification=independently_verified,
         )
     if result.exit_code is not None or result.status in {
         ExecutionStatus.TIMED_OUT,

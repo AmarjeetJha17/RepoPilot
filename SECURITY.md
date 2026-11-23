@@ -315,3 +315,16 @@ Until a dedicated private security channel exists, **do not post exploit details
 
 ## 14. Deployment note
 **Do not interpret this document as proof that all controls are implemented.** Every control must be verified by tests; disable unsafe capabilities until controls exist. Security configuration drift is release-blocking.
+
+## Phase 5.1 operational verification
+
+The concrete backend requires rootless cgroup v2/systemd, a same-user local socket,
+seccomp and a locally available reviewed digest. It overrides image entrypoints,
+disables health checks and inspects the actual isolation configuration before
+start. Cleanup accepts only this instance's registered IDs and matching labels.
+Actual command status comes from bounded Docker state inspection. Client process
+groups and owned-container removal are separate cleanup operations. Fake results
+default to no real execution evidence. Same-user bind-path races, daemon outages,
+repeated cancellation and container-runtime vulnerabilities remain limitations.
+Real Docker enforcement is NOT_RUN in the Windows session; see
+[operational limits and provisioning](docs/docker-verification.md).

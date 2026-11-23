@@ -22,12 +22,20 @@ def test_create_uses_only_the_owned_staging_mount_and_restrictive_flags(
     async def verify_daemon(self, staging_root: Path) -> None:
         return None
 
+    async def verify_image(self, image: str) -> None:
+        return None
+
+    async def inspect_isolation(self, container_id: str) -> None:
+        return None
+
     async def capture(argv: list[str], *, max_runtime: float) -> tuple[bytes, bytes]:
         captured.extend(argv)
         return b"a" * 64, b""
 
     monkeypatch.setattr(DockerCliBackend, "_validate_host_environment", validate_host)
     monkeypatch.setattr(DockerCliBackend, "_verify_daemon", verify_daemon)
+    monkeypatch.setattr(DockerCliBackend, "_verify_image", verify_image)
+    monkeypatch.setattr(DockerCliBackend, "inspect_isolation", inspect_isolation)
     monkeypatch.setattr(docker_backend, "_capture", capture)
     staging = tmp_path / "private-staging"
     staging.mkdir()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 import time
 from dataclasses import dataclass
@@ -153,6 +154,8 @@ class BackendExecution:
     stderr: str
     truncated: bool = False
     resource_limited: bool = False
+    real_container: bool = False
+    isolation_inspected: bool = False
 
 
 class SandboxBackend(Protocol):
@@ -178,6 +181,10 @@ class ExecutionResult:
     stderr: str = ""
     output_truncated: bool = False
     cleanup: CleanupStatus = CleanupStatus.NOT_CREATED
+    real_container: bool = False
+    isolation_inspected: bool = False
+    image_digest: str | None = None
+    workspace_sha256: str | None = None
 
 
 class _SandboxPolicyArgs(BaseModel):
@@ -244,6 +251,10 @@ class SandboxRunner:
         truncated = False
         container_id: str | None = None
         cleanup = CleanupStatus.NOT_CREATED
+        real_container = isolation_inspected = False
+        workspace_digest: str | None = None
+        operation: asyncio.Task[BackendExecution] | None = None
+        cancelled: asyncio.Task[bool] | None = None
         async with self._lock:
             try:
                 self._validate_request(request)
@@ -255,6 +266,7 @@ class SandboxRunner:
                     status = ExecutionStatus.DENIED
                     return self._result(execution_id, request.command, status, None, started)
                 argv = _command_argv(request)
+                workspace_digest = self._workspace_digest()
                 spec = ContainerSpec(
                     execution_id,
                     self._config.image,
@@ -265,7 +277,9 @@ class SandboxRunner:
                 container_id = await asyncio.wait_for(
                     self._backend.create(spec), timeout=min(30.0, self._limits.timeout_seconds)
                 )
-                if not self._integrity_is_eligible():
+                if cancellation is not None and cancellation.is_set():
+                    status = ExecutionStatus.CANCELLED
+                elif not self._integrity_is_eligible():
                     status = ExecutionStatus.DENIED
                 else:
                     operation = asyncio.create_task(
@@ -298,6 +312,8 @@ class SandboxRunner:
                             cancelled.cancel()
                             outcome = operation.result()
                     if outcome is not None:
+                        real_container = outcome.real_container
+                        isolation_inspected = outcome.isolation_inspected
                         exit_code = outcome.exit_code
                         stdout, stderr, truncated = (
                             outcome.stdout,
@@ -311,6 +327,11 @@ class SandboxRunner:
                             if exit_code == 0
                             else ExecutionStatus.COMMAND_FAILED
                         )
+                        if (
+                            not self._integrity_is_eligible()
+                            or self._workspace_digest() != workspace_digest
+                        ):
+                            status = ExecutionStatus.DENIED
             except TimeoutError:
                 status = ExecutionStatus.TIMED_OUT
             except asyncio.CancelledError:
@@ -329,6 +350,12 @@ class SandboxRunner:
             except (OSError, RuntimeError):
                 status = ExecutionStatus.INFRASTRUCTURE_ERROR
             finally:
+                pending = [task for task in (operation, cancelled) if task is not None]
+                for task in pending:
+                    if not task.done():
+                        task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
                 if container_id is not None:
                     try:
                         removed = await asyncio.wait_for(
@@ -349,6 +376,10 @@ class SandboxRunner:
             stderr,
             truncated,
             cleanup,
+            real_container,
+            isolation_inspected,
+            self._config.image.split("@")[1] if real_container else None,
+            workspace_digest,
         )
 
     def _validate_request(self, request: SandboxRequest) -> None:
@@ -365,6 +396,16 @@ class SandboxRunner:
     def _integrity_is_eligible(self) -> bool:
         report = self._manager.check_integrity(self._handle)
         return all(change.kind is IntegrityChangeKind.MODIFIED for change in report.changes)
+
+    def _workspace_digest(self) -> str:
+        """Bind evidence to the bounded staged inputs, not just their original baseline."""
+        reader = self._manager.read_access(self._handle)
+        digest = hashlib.sha256()
+        for item in self._handle.baseline.files:
+            content = reader.read_bytes(item.path, max_bytes=reader.max_file_bytes).content
+            digest.update(item.path.encode("utf-8") + b"\0")
+            digest.update(hashlib.sha256(content).digest())
+        return digest.hexdigest()
 
     def _authorize(self, request: SandboxRequest) -> None:
         proposal = ToolCall("sandbox-run", "sandbox_verify", {"paths": list(request.paths)})
