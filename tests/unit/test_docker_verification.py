@@ -1,0 +1,417 @@
+"""Offline verification of Docker diagnostics and command exit semantics."""
+
+import asyncio
+import json
+import stat
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from repopilot.sandbox import docker_backend as docker
+from repopilot.sandbox.execution import (
+    ContainerSpec,
+    SandboxConfig,
+    SandboxLimits,
+    SandboxUnsupportedError,
+)
+
+IMAGE = "example.invalid/reviewed@sha256:" + "a" * 64
+
+
+def immediate(coroutine):
+    try:
+        coroutine.send(None)
+    except StopIteration as completed:
+        return completed.value
+    raise AssertionError("Fake operations must not wait for external resources")
+
+
+@pytest.mark.parametrize("code", [0, 1, 2, 137])
+def test_container_state_preserves_real_exit_code(code):
+    state = {
+        "Status": "exited",
+        "Running": False,
+        "ExitCode": code,
+        "OOMKilled": code == 137,
+        "StartedAt": "2026-11-23T00:00:00Z",
+        "Error": "",
+    }
+    assert docker._exit_state(state) == (code, code == 137)
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"Status": "running"},
+        {"Running": True},
+        {"ExitCode": False},
+        {"ExitCode": -1},
+        {"OOMKilled": "false"},
+        {"StartedAt": "0001-01-01T00:00:00Z"},
+        {"Error": "failed"},
+    ],
+)
+def test_invalid_or_unstarted_state_cannot_claim_command_success(update):
+    state = {
+        "Status": "exited",
+        "Running": False,
+        "ExitCode": 0,
+        "OOMKilled": False,
+        "StartedAt": "2026-11-23T00:00:00Z",
+        "Error": "",
+    }
+    state.update(update)
+    with pytest.raises(RuntimeError):
+        docker._exit_state(state)
+
+
+@pytest.mark.parametrize("digests", [[], [IMAGE.replace("a" * 64, "b" * 64)], None, "bad"])
+def test_missing_or_mismatched_image_is_rejected(monkeypatch, digests):
+    async def capture(argv, **kwargs):
+        assert argv[4:6] == ["inspect", "--format"]
+        return json.dumps(digests).encode(), b""
+
+    monkeypatch.setattr(docker, "_capture", capture)
+    with pytest.raises(SandboxUnsupportedError):
+        immediate(docker.DockerCliBackend()._verify_image(IMAGE))
+
+
+def test_cleanup_does_not_delete_unowned_container():
+    assert immediate(docker.DockerCliBackend().cleanup("a" * 64, 1)) is False
+
+
+@pytest.mark.parametrize("phase", ["host", "daemon", "image", "ready"])
+def test_readiness_uses_no_create_and_exposes_no_private_paths(monkeypatch, phase):
+    monkeypatch.setattr(docker.sys, "platform", "linux")
+    monkeypatch.setattr(docker.os, "getuid", lambda: 1000, raising=False)
+    monkeypatch.setattr(docker.shutil, "which", lambda _: "/synthetic/docker")
+
+    def host(self, root):
+        if phase == "host":
+            raise SandboxUnsupportedError("private path")
+
+    async def daemon(self, root):
+        if phase == "daemon":
+            raise SandboxUnsupportedError("private path")
+
+    async def image(self, ref):
+        if phase == "image":
+            raise SandboxUnsupportedError("private path")
+
+    monkeypatch.setattr(docker.DockerCliBackend, "_validate_host_environment", host)
+    monkeypatch.setattr(docker.DockerCliBackend, "_verify_daemon", daemon)
+    monkeypatch.setattr(docker.DockerCliBackend, "_verify_image", image)
+    result = immediate(docker.diagnose_docker(SandboxConfig(IMAGE), Path("private")))
+    assert result.status is (
+        docker.ReadinessStatus.READY if phase == "ready" else docker.ReadinessStatus.NOT_READY
+    )
+    assert "private" not in repr(result)
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "owner", "options", "cgroups", "ready"),
+    [
+        (
+            "unix:///tmp/rootless.sock",
+            1000,
+            ["name=rootless", "name=seccomp,profile=builtin"],
+            b'"2" "systemd"',
+            True,
+        ),
+        ("tcp://remote:2376", 1000, ["name=rootless", "name=seccomp"], b'"2" "systemd"', False),
+        (
+            "unix:///tmp/rootless.sock",
+            0,
+            ["name=rootless", "name=seccomp"],
+            b'"2" "systemd"',
+            False,
+        ),
+        ("unix:///tmp/rootless.sock", 1000, ["name=seccomp"], b'"2" "systemd"', False),
+        ("unix:///tmp/rootless.sock", 1000, ["name=rootless"], b'"2" "systemd"', False),
+        (
+            "unix:///tmp/rootless.sock",
+            1000,
+            ["name=rootless", "seccomp=unconfined"],
+            b'"2" "systemd"',
+            False,
+        ),
+        ("unix:///tmp/rootless.sock", 1000, None, b'"2" "systemd"', False),
+        (
+            "unix:///tmp/rootless.sock",
+            1000,
+            ["name=rootless", "name=seccomp"],
+            b'"1" "none"',
+            False,
+        ),
+    ],
+)
+def test_daemon_prerequisites_fail_closed(
+    monkeypatch, tmp_path, endpoint, owner, options, cgroups, ready
+):
+    monkeypatch.setattr(docker.os, "getuid", lambda: 1000, raising=False)
+
+    async def fake_stat(fn):
+        if fn.__self__ == tmp_path:
+            return SimpleNamespace(st_uid=1000, st_mode=stat.S_IFDIR | 0o700)
+        return SimpleNamespace(st_uid=owner, st_mode=stat.S_IFSOCK | 0o600)
+
+    async def capture(argv, **kwargs):
+        if "context" in argv[3:]:
+            return json.dumps(endpoint).encode(), b""
+        if "{{json .SecurityOptions}}" in argv:
+            return json.dumps(options).encode(), b""
+        if "{{json .MemoryLimit}} {{json .CpuCfsQuota}} {{json .PidsLimit}}" in argv:
+            return b"true true true", b""
+        return cgroups, b""
+
+    monkeypatch.setattr(docker.asyncio, "to_thread", fake_stat)
+    monkeypatch.setattr(docker, "_capture", capture)
+    if ready:
+        asyncio.run(docker.DockerCliBackend()._verify_daemon(tmp_path))
+    else:
+        with pytest.raises(SandboxUnsupportedError):
+            asyncio.run(docker.DockerCliBackend()._verify_daemon(tmp_path))
+
+
+@pytest.mark.parametrize("exit_code", [0, 1, 2])
+def test_execute_inspects_container_exit_instead_of_client_exit(monkeypatch, tmp_path, exit_code):
+    backend = docker.DockerCliBackend()
+    identifier = "a" * 64
+    backend._owned[identifier] = ContainerSpec("run", IMAGE, tmp_path, ("python",), SandboxLimits())
+
+    class Stream:
+        async def read(self, size):
+            return b""
+
+    class Process:
+        stdout = stderr = Stream()
+        returncode = 0  # Client succeeded even when pytest did not.
+
+        async def wait(self):
+            return 0
+
+    async def spawn(*args, **kwargs):
+        return Process()
+
+    async def inspect(_id):
+        return None
+
+    async def state(_id):
+        return {
+            "Status": "exited",
+            "Running": False,
+            "ExitCode": exit_code,
+            "OOMKilled": False,
+            "Error": "",
+            "StartedAt": "2026-11-23T00:00:00Z",
+        }
+
+    monkeypatch.setattr(docker.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(backend, "inspect_isolation", inspect)
+    monkeypatch.setattr(backend, "_inspect_state", state)
+    result = asyncio.run(backend.execute(identifier, 1, 1024))
+    assert result.exit_code == exit_code
+    assert result.real_container and result.isolation_inspected
+
+
+def test_cleanup_checks_label_and_observed_removal(monkeypatch, tmp_path):
+    backend = docker.DockerCliBackend()
+    identifier = "a" * 64
+    backend._owned[identifier] = ContainerSpec("run", IMAGE, tmp_path, ("python",), SandboxLimits())
+    calls = []
+
+    async def capture(argv, **kwargs):
+        calls.append(argv)
+        return (b"run" if "inspect" in argv else b""), b""
+
+    monkeypatch.setattr(docker, "_capture", capture)
+    assert immediate(backend.cleanup(identifier, 1))
+    assert len(calls) == 3
+    assert "rm" in calls[1]
+    assert "ps" in calls[2]
+    assert immediate(backend.cleanup(identifier, 1)) is False
+
+
+def test_cleanup_label_mismatch_never_removes_container(monkeypatch, tmp_path):
+    backend = docker.DockerCliBackend()
+    identifier = "a" * 64
+    backend._owned[identifier] = ContainerSpec("run", IMAGE, tmp_path, ("python",), SandboxLimits())
+
+    async def capture(argv, **kwargs):
+        assert "rm" not in argv
+        return b"foreign", b""
+
+    monkeypatch.setattr(docker, "_capture", capture)
+    assert immediate(backend.cleanup(identifier, 1)) is False
+
+
+def test_partial_create_cancellation_attempts_owned_cleanup(monkeypatch, tmp_path):
+    backend = docker.DockerCliBackend()
+    spec = ContainerSpec("run", IMAGE, tmp_path, ("python",), SandboxLimits())
+    cleaned = []
+
+    async def verify(*args):
+        return None
+
+    async def capture(*args, **kwargs):
+        raise asyncio.CancelledError
+
+    async def cleanup(name, execution_id):
+        cleaned.append((name, execution_id))
+        return True
+
+    monkeypatch.setattr(backend, "_validate_host_environment", lambda _: None)
+    monkeypatch.setattr(backend, "_verify_daemon", verify)
+    monkeypatch.setattr(backend, "_verify_image", verify)
+    monkeypatch.setattr(backend, "_cleanup_partial", cleanup)
+    monkeypatch.setattr(docker, "_capture", capture)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(backend.create(spec))
+    assert cleaned == [("repopilot-run", "run")]
+
+
+def test_concurrent_stream_output_is_bounded_and_truncated(monkeypatch, tmp_path):
+    backend = docker.DockerCliBackend()
+    identifier = "a" * 64
+    backend._owned[identifier] = ContainerSpec("run", IMAGE, tmp_path, ("python",), SandboxLimits())
+
+    class Stream:
+        def __init__(self):
+            self.remaining = True
+
+        async def read(self, size):
+            if self.remaining:
+                self.remaining = False
+                return b"x" * 4096
+            return b""
+
+    class Process:
+        returncode = None
+
+        def __init__(self):
+            self.stdout, self.stderr = Stream(), Stream()
+
+        def kill(self):
+            self.returncode = -9
+
+        async def wait(self):
+            await asyncio.sleep(0)
+            self.returncode = 0 if self.returncode is None else self.returncode
+            return self.returncode
+
+    async def spawn(*args, **kwargs):
+        return Process()
+
+    async def inspect(_id):
+        return None
+
+    async def state(_id):
+        return {"Status": "running", "Running": True}
+
+    monkeypatch.setattr(docker.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(backend, "inspect_isolation", inspect)
+    monkeypatch.setattr(backend, "_inspect_state", state)
+    result = asyncio.run(backend.execute(identifier, 1, 1024))
+    assert result.truncated and result.resource_limited
+    assert len(result.stdout.encode()) + len(result.stderr.encode()) == 1024
+
+
+def test_cancellation_stops_client_and_drains_tasks(monkeypatch, tmp_path):
+    backend = docker.DockerCliBackend()
+    identifier = "a" * 64
+    backend._owned[identifier] = ContainerSpec("run", IMAGE, tmp_path, ("python",), SandboxLimits())
+    started, stopped = asyncio.Event(), []
+
+    class Stream:
+        async def read(self, size):
+            await asyncio.Event().wait()
+
+    class Process:
+        stdout = stderr = Stream()
+        returncode = None
+
+        async def wait(self):
+            started.set()
+            await asyncio.Event().wait()
+
+    async def spawn(*args, **kwargs):
+        return Process()
+
+    async def inspect(_id):
+        return None
+
+    async def stop(process):
+        process.returncode = -9
+        stopped.append(True)
+
+    async def scenario():
+        task = asyncio.create_task(backend.execute(identifier, 1, 1024))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+
+    monkeypatch.setattr(docker.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(backend, "inspect_isolation", inspect)
+    monkeypatch.setattr(docker, "_stop_client", stop)
+    asyncio.run(scenario())
+    assert stopped == [True]
+
+
+@pytest.mark.parametrize(
+    "violation",
+    [
+        None,
+        "network",
+        "rootfs",
+        "capabilities",
+        "memory",
+        "cpu",
+        "pids",
+        "tmpfs",
+        "mount",
+        "environment",
+    ],
+)
+def test_inspected_isolation_must_match_every_critical_control(tmp_path, violation):
+    limits = SandboxLimits()
+    spec = ContainerSpec("run", IMAGE, tmp_path, ("python",), limits)
+    host = {
+        "NetworkMode": "none",
+        "ReadonlyRootfs": True,
+        "Privileged": False,
+        "CapDrop": ["ALL"],
+        "CapAdd": None,
+        "SecurityOpt": ["no-new-privileges:true"],
+        "Memory": limits.memory_bytes,
+        "NanoCpus": 1_000_000_000,
+        "PidsLimit": limits.pids,
+        "Tmpfs": {"/tmp": f"rw,noexec,nosuid,nodev,size={limits.tmpfs_bytes},mode=1777"},
+    }
+    mounts = [{"Type": "bind", "Source": str(tmp_path), "Destination": "/workspace", "RW": False}]
+    environment = ["PATH=/usr/local/bin:/usr/bin", "HOME=/tmp"]
+    if violation == "network":
+        host["NetworkMode"] = "host"
+    elif violation == "rootfs":
+        host["ReadonlyRootfs"] = False
+    elif violation == "capabilities":
+        host["CapDrop"] = []
+    elif violation == "memory":
+        host["Memory"] = 0
+    elif violation == "cpu":
+        host["NanoCpus"] = 0
+    elif violation == "pids":
+        host["PidsLimit"] = -1
+    elif violation == "tmpfs":
+        host["Tmpfs"] = {}
+    elif violation == "mount":
+        mounts[0]["RW"] = True
+    elif violation == "environment":
+        environment.append("PROVIDER_API_KEY=synthetic-not-a-secret")
+    if violation is None:
+        docker._check_isolation(spec, host, mounts, environment)
+    else:
+        with pytest.raises(RuntimeError):
+            docker._check_isolation(spec, host, mounts, environment)

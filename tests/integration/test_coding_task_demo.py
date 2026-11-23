@@ -135,7 +135,7 @@ def test_missing_docker_runtime_is_not_reported_as_a_test_pass(
     assert result.independent_verification is False
 
 
-def test_successful_sandbox_run_is_reported_as_independent_verification(
+def test_stub_sandbox_pass_is_not_independent_verification(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     async def passed(
@@ -159,5 +159,5 @@ def test_successful_sandbox_run_is_reported_as_independent_verification(
 
     assert result.sandbox_tests == "PASS"
     assert result.sandbox_status == "passed"
-    assert result.outcome == "verified"
-    assert result.independent_verification is True
+    assert result.outcome == "sandbox_passed"
+    assert result.independent_verification is False  # A stub result is not real execution evidence.

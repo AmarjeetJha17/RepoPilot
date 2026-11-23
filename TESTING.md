@@ -203,3 +203,13 @@ A milestone is releasable only when:
 - Reproduction instructions and honest limitations.
 
 See [PRD.md](PRD.md), [SECURITY.md](SECURITY.md), and [DATABASE.md](DATABASE.md).
+
+## Phase 5.1 verification evidence
+
+Portable tests mock Docker diagnostics, reject unsupported daemon/image state,
+and preserve inspected command exit codes. Existing fake runner tests continue
+to check policy, timeouts and cleanup on Linux. They are not real isolation proof.
+The manual [smoke harness](docs/docker-verification.md) checks six synthetic cases
+with a pre-provisioned rootless daemon and reviewed image; ordinary PR CI does
+not invoke it. Real Docker is NOT_RUN on the Windows development host. Native
+Windows skips never count as Linux boundary verification.

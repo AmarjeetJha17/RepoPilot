@@ -366,3 +366,14 @@ telemetry is performed by the current loop.
 - [Tree-sitter](https://tree-sitter.github.io/tree-sitter/)
 - [OpenTelemetry Python](https://opentelemetry.io/docs/languages/python/)
 - [Docker rootless mode](https://docs.docker.com/engine/security/rootless/)
+
+## Phase 5.1 Docker verification boundary
+
+DockerCliBackend now checks local image digest availability, owns container IDs per
+instance, inspects isolation configuration before start, and reads actual container
+state for command exits. diagnose_docker returns typed readiness without creating
+containers. The operator-only scripts/verify_docker_sandbox.py composes existing
+WorkspaceManager and SandboxRunner over fixed synthetic fixtures. Backend and
+result metadata default to no real-container evidence for fake implementations.
+See [operational workflow](docs/docker-verification.md). Real Docker remains NOT_RUN
+in this Windows session; the smoke harness does not verify a coding-task patch.
