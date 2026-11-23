@@ -307,7 +307,7 @@ class DockerCliBackend:
                 self.docker_context,
                 "info",
                 "--format",
-                "{{json .MemoryLimit}} {{json .CpuCfsQuota}} {{json .PidsLimit}}",
+                "{{json .MemoryLimit}} {{json .CPUCfsQuota}} {{json .PidsLimit}}",
             ),
             max_runtime=10,
         )
