@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from repopilot.application.coding_task_demo import (
+    _BASELINE_SHA256,
+    _BASELINE_SOURCE,
     CodingTaskDemoReport,
     _create_fixture,
     _source_is_unchanged,
 )
+
+
+def test_baseline_fixture_digest_matches_its_exact_utf8_bytes() -> None:
+    digest = hashlib.sha256(_BASELINE_SOURCE.encode("utf-8")).hexdigest()
+
+    assert digest == _BASELINE_SHA256
 
 
 def test_report_json_is_stable_and_does_not_add_machine_paths() -> None:

@@ -94,7 +94,7 @@ _REGRESSION_TEST = (
     "def test_non_empty_input_returns_first_item() -> None:\n"
     '    assert first_or_empty(["alpha", "beta"]) == "alpha"\n'
 )
-_BASELINE_SHA256 = "3210aac3b1b3a4d67f2adaebf97c2fa17cac17a42ac35b601667365b45f0afbb"
+_BASELINE_SHA256 = "da214e37fc06312a82a27cfad0d6e027eeaa2589a25798bb0f4149307e120eb3"
 _MAX_DIFF_BYTES = 12_000
 
 
