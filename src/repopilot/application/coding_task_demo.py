@@ -437,7 +437,10 @@ def _stage_known_correction(
     )
     validation = stager.validate_proposal(proposal)
     if not validation.valid:
-        return _fail(report, _patch_failure(validation.reason))
+        return _fail(
+            replace(report, staging_status=PatchStagingStatus.FAILED.value),
+            _patch_failure(validation.reason),
+        )
     staged = stager.stage(proposal)
     report = replace(report, staging_status=staged.status.value)
     if staged.status is not PatchStagingStatus.STAGED:

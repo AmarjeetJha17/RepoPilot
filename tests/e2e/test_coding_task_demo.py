@@ -34,6 +34,7 @@ def test_offline_coding_task_stages_known_patch_with_accurate_evidence(
     assert result.tool_result_status == "success"
     assert result.feedback_correlated is True
     assert result.patch_provenance == "deterministic-fixture"
+    assert result.failure_code is None, f"demo failure code: {result.failure_code}"
     assert result.staging_status == "staged"
     assert result.changed_files == ("src/first_item.py",)
     assert result.baseline_sha256 == BASELINE_SHA256
