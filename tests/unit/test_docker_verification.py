@@ -499,6 +499,8 @@ def test_cancellation_stops_client_and_drains_tasks(monkeypatch, tmp_path):
         "pids",
         "tmpfs",
         "mount",
+        "mount_propagation",
+        "missing_mount_propagation",
         "environment",
     ],
 )
@@ -517,7 +519,15 @@ def test_inspected_isolation_must_match_every_critical_control(tmp_path, violati
         "PidsLimit": limits.pids,
         "Tmpfs": {"/tmp": f"rw,noexec,nosuid,nodev,size={limits.tmpfs_bytes},mode=1777"},
     }
-    mounts = [{"Type": "bind", "Source": str(tmp_path), "Destination": "/workspace", "RW": False}]
+    mounts = [
+        {
+            "Type": "bind",
+            "Source": str(tmp_path),
+            "Destination": "/workspace",
+            "RW": False,
+            "Propagation": "rprivate",
+        }
+    ]
     environment = ["PATH=/usr/local/bin:/usr/bin", "HOME=/tmp"]
     if violation == "network":
         host["NetworkMode"] = "host"
@@ -535,6 +545,10 @@ def test_inspected_isolation_must_match_every_critical_control(tmp_path, violati
         host["Tmpfs"] = {}
     elif violation == "mount":
         mounts[0]["RW"] = True
+    elif violation == "mount_propagation":
+        mounts[0]["Propagation"] = "rshared"
+    elif violation == "missing_mount_propagation":
+        mounts[0].pop("Propagation")
     elif violation == "environment":
         environment.append("PROVIDER_API_KEY=synthetic-not-a-secret")
     if violation is None:

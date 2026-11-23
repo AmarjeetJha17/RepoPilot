@@ -80,7 +80,8 @@ class DockerCliBackend:
             "--user",
             "0:0",
             "--mount",
-            f"type=bind,source={spec.staging_root},target=/workspace,readonly,bind-recursive=readonly",
+            f"type=bind,source={spec.staging_root},target=/workspace,readonly,"
+            "bind-recursive=readonly,bind-propagation=rprivate",
             "--tmpfs",
             f"/tmp:rw,noexec,nosuid,nodev,size={spec.limits.tmpfs_bytes},mode=1777",
             "--workdir",
@@ -537,6 +538,7 @@ def _check_isolation(spec: ContainerSpec, host: object, mounts: object, env: obj
         or mount.get("Source") != str(spec.staging_root)
         or mount.get("Destination") != "/workspace"
         or mount.get("RW") is not False
+        or mount.get("Propagation") != "rprivate"
     ):
         raise RuntimeError("Container workspace mount mismatch.")
     allowed = {

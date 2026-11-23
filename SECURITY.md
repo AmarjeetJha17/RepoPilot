@@ -169,7 +169,8 @@ rootless daemon. In rootless mode the container runs as namespace
 UID 0, which maps to that unprivileged host account; all capabilities are dropped and no-new-privileges
 is enabled. Rootful user-namespace remapping is currently refused because owner-only staging-file
 access has not been safely mapped for it. The backend applies `--network=none`, read-only root and
-recursive staging mounts, bounded memory/CPU/PIDs/tmpfs/runtime/output, and relies on the engine's
+recursively read-only staging mounts with `rprivate` propagation, bounded
+memory/CPU/PIDs/tmpfs/runtime/output, and relies on the engine's
 default seccomp profile. The container receives only fixed environment values. Docker
 configuration and the daemon remain trusted host infrastructure; no daemon socket or host
 credentials are mounted into the container. The target image must already include Python and pytest
