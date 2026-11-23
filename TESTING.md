@@ -87,6 +87,16 @@ sensitive-file exclusion, workspace-identity binding, no source mutation, and no
 after a denied call. Ubuntu CI runs both files explicitly; Windows skips are not Linux verification.
 No live API, shell, Git mutation, Docker, patch staging, or live application occurs in this workflow.
 
+Phase 4.8's `tests/e2e/test_coding_task_demo.py` runs the offline demonstration on Linux over a
+synthetic empty-input bug. It checks two mock decisions, a real bounded dispatcher read and correlated
+untrusted feedback, deterministic fixture patch provenance, staging diff and hashes, source
+integrity, and explicit separation of fixture checks from sandbox verification. Integration tests
+cover provider/budget failures, stale patch hashes, cancellation cleanup, and unavailable Docker
+runtime reporting. Security tests cover denied and invalid tool calls, no host command/network
+execution, and model text's inability to change fixture patch bytes. Ubuntu CI invokes the E2E file
+explicitly; native Windows skips do not count as Linux verification. Docker execution is opt-in and
+its fake-backend tests do not verify real container isolation.
+
 ## 4. Test conventions
 - Use **pytest** fixtures, parametrization, and named assertions.
 - Test behavior, errors, and state invariants—not implementation-specific prompt wording.

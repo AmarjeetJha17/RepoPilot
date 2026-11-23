@@ -62,6 +62,9 @@ jobs:
       - name: Multi-step orchestration integration tests (Linux)
         run: uv run --no-sync pytest tests/integration/test_multistep_agent.py -q
 
+      - name: Offline coding-task E2E (Linux)
+        run: uv run --no-sync pytest tests/e2e/test_coding_task_demo.py -q
+
       - name: Patch staging security tests (Linux)
         run: uv run --no-sync pytest tests/security/test_patch_staging.py -q
 

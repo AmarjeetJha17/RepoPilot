@@ -1,7 +1,8 @@
 # RepoPilot
 
-RepoPilot is a local-first, terminal-based coding agent focused on producing
-reviewable patches and measuring their quality with independent evaluation.
+RepoPilot is a local-first, terminal-based coding-agent prototype focused on
+producing reviewable patches and measuring their quality with independent
+evaluation.
 
 ## Planned capabilities
 
@@ -105,6 +106,36 @@ The separate dispatcher caps each structured result at 16 KB by default and uses
 a five-second soft execution budget; synchronous filesystem operations cannot be
 interrupted while in progress. Read results are not independent verification.
 
+### Offline coding-task demonstration
+
+Run the synthetic empty-input bug demonstration with:
+
+```bash
+uv run python scripts/demo_coding_task.py
+uv run python scripts/demo_coding_task.py --json
+```
+
+The demonstration creates an isolated disposable repository, makes two scripted
+decisions with `MockModelProvider`, performs a real bounded repository read through
+the existing read-only dispatcher, and stages a known fixture correction in its
+manager-owned workspace. The patch comes from trusted fixture data; model output
+does not supply patch contents. The report separates AST/fixture checks from
+independent sandbox verification. Sandbox tests are `NOT_RUN` by default.
+
+To request sandbox tests, provide a reviewed digest-pinned image and a working
+rootless Docker environment:
+
+```bash
+uv run python scripts/demo_coding_task.py --run-sandbox \
+  --docker-image registry.example/repopilot-tests@sha256:REPLACE_WITH_REVIEWED_DIGEST
+```
+
+This demonstration does not execute commands on the host, apply changes to a live
+repository, or request approval. Linux is the supported workspace security target.
+Windows users can use an Ubuntu WSL distribution; WSL and Docker availability and
+isolation must be checked separately. A demonstration run is not independent
+verification unless the sandbox tests actually run successfully.
+
 ### Opt-in multi-step read-only workflow
 
 Trusted application code can explicitly invoke `MultiStepAgentOrchestrator` with
@@ -179,8 +210,10 @@ targeting `main`, and manual `workflow_dispatch` runs. The workflow uses Ubuntu
 and Python 3.12, installs dependencies from `uv.lock`, checks Ruff formatting
 and lint, runs mypy and pytest, measures coverage, validates the pre-commit
 configuration, runs workspace and repository-intelligence, patch-staging, and
-patch-approval integration/security
-targets on Ubuntu, and builds the package. When generated, `coverage.xml` is
+patch-approval integration/security targets on Ubuntu, runs the offline coding-task
+E2E test, and builds the package. The default workflow does not start Docker; the
+demonstration's Docker tests remain opt-in and are not part of the CI proof. When
+generated, `coverage.xml` is
 uploaded as a workflow artifact; no third-party coverage service is used.
 
 Run the same checks locally after `uv sync`:
