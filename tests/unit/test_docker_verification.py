@@ -185,7 +185,7 @@ def test_daemon_prerequisites_fail_closed(
             return json.dumps(endpoint).encode(), b""
         if "{{json .SecurityOptions}}" in argv:
             return json.dumps(options).encode(), b""
-        if "{{json .MemoryLimit}} {{json .CpuCfsQuota}} {{json .PidsLimit}}" in argv:
+        if "{{json .MemoryLimit}} {{json .CPUCfsQuota}} {{json .PidsLimit}}" in argv:
             return b"true true true", b""
         return cgroups, b""
 
@@ -214,7 +214,7 @@ def test_rootless_context_is_used_for_daemon_endpoint_and_info(monkeypatch, tmp_
             return b'"unix:///run/user/1000/docker.sock"', b""
         if "{{json .SecurityOptions}}" in argv:
             return b'["name=rootless", "name=seccomp,profile=builtin"]', b""
-        if "{{json .MemoryLimit}} {{json .CpuCfsQuota}} {{json .PidsLimit}}" in argv:
+        if "{{json .MemoryLimit}} {{json .CPUCfsQuota}} {{json .PidsLimit}}" in argv:
             return b"true true true", b""
         return b'"2" "systemd"', b""
 
@@ -224,6 +224,42 @@ def test_rootless_context_is_used_for_daemon_endpoint_and_info(monkeypatch, tmp_
 
     assert commands
     assert all(command[:3] == ["docker", "--context", "rootless"] for command in commands)
+
+
+@pytest.mark.parametrize(
+    "features",
+    [
+        b"false true true",
+        b"true false true",
+        b"true true false",
+        b"true false false",
+        b"true true",
+        b"malformed",
+    ],
+)
+def test_daemon_rejects_missing_or_malformed_resource_capabilities(monkeypatch, tmp_path, features):
+    monkeypatch.setattr(docker.os, "getuid", lambda: 1000, raising=False)
+
+    async def fake_stat(fn):
+        if fn.__self__ == tmp_path:
+            return SimpleNamespace(st_uid=1000, st_mode=stat.S_IFDIR | 0o700)
+        return SimpleNamespace(st_uid=1000, st_mode=stat.S_IFSOCK | 0o600)
+
+    async def capture(argv, **kwargs):
+        if argv[3] == "context":
+            return b'"unix:///run/user/1000/docker.sock"', b""
+        if "{{json .SecurityOptions}}" in argv:
+            return b'["name=rootless", "name=seccomp,profile=builtin"]', b""
+        if "{{json .CgroupVersion}} {{json .CgroupDriver}}" in argv:
+            return b'"2" "systemd"', b""
+        if "{{json .MemoryLimit}} {{json .CPUCfsQuota}} {{json .PidsLimit}}" in argv:
+            return features, b""
+        raise AssertionError("Daemon probe must use the expected CLI fields.")
+
+    monkeypatch.setattr(docker.asyncio, "to_thread", fake_stat)
+    monkeypatch.setattr(docker, "_capture", capture)
+    with pytest.raises(SandboxUnsupportedError):
+        asyncio.run(docker.DockerCliBackend("rootless")._verify_daemon(tmp_path))
 
 
 @pytest.mark.parametrize("exit_code", [0, 1, 2])
