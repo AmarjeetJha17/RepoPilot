@@ -332,3 +332,11 @@ default to no real execution evidence. Same-user bind-path races, daemon outages
 repeated cancellation and container-runtime vulnerabilities remain limitations.
 Real Docker enforcement is NOT_RUN in the Windows session; see
 [operational limits and provisioning](docs/docker-verification.md).
+
+Container creation and container startup have finite deadlines separate from the
+requested workload deadline. The workload deadline begins only after Docker reports
+a valid container start timestamp. Setup, startup, and unverified backend timeouts
+do not claim that a workload ran. The manual smoke harness requires an inspected,
+created container, observed workload start, the expected workload timeout duration,
+successful owned cleanup, and unchanged source files before it accepts the timeout
+scenario; cleanup alone is not verification evidence.

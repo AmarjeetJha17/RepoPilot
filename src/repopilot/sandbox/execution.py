@@ -35,6 +35,9 @@ from repopilot.tools.registry import ToolRegistry
 _IMAGE_DIGEST = re.compile(r"^[\w./:-]+@sha256:[a-fA-F0-9]{64}$")
 _MAX_PATHS = 64
 _MAX_OUTPUT_BYTES = 256 * 1024
+CONTAINER_SETUP_TIMEOUT_SECONDS = 30.0
+CONTAINER_STARTUP_TIMEOUT_SECONDS = 30.0
+_EXECUTION_REPORTING_GRACE_SECONDS = 12.0
 
 
 class VerificationCommand(StrEnum):
@@ -64,12 +67,41 @@ class CleanupStatus(StrEnum):
     FAILED = "failed"
 
 
+class ExecutionTimeoutPhase(StrEnum):
+    """Safe lifecycle stage at which a bounded operation expired."""
+
+    CONTAINER_SETUP = "container_setup"
+    CONTAINER_STARTUP = "container_startup"
+    WORKLOAD_EXECUTION = "workload_execution"
+    BACKEND_OPERATION = "backend_operation"
+
+
 class SandboxUnsupportedError(RuntimeError):
     """The host or Docker isolation mode cannot satisfy the runner contract."""
 
 
 class SandboxCleanupError(RuntimeError):
     """A created or partially created container could not be safely removed."""
+
+
+class SandboxExecutionTimeout(TimeoutError):
+    """Bounded timeout result with evidence about whether a real workload started."""
+
+    def __init__(
+        self,
+        phase: ExecutionTimeoutPhase,
+        *,
+        execution_started: bool = False,
+        real_container: bool = False,
+        isolation_inspected: bool = False,
+        execution_duration_seconds: float | None = None,
+    ) -> None:
+        super().__init__(phase.value)
+        self.phase = phase
+        self.execution_started = execution_started
+        self.real_container = real_container
+        self.isolation_inspected = isolation_inspected
+        self.execution_duration_seconds = execution_duration_seconds
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +188,8 @@ class BackendExecution:
     resource_limited: bool = False
     real_container: bool = False
     isolation_inspected: bool = False
+    execution_started: bool = False
+    execution_duration_seconds: float | None = None
 
 
 class SandboxBackend(Protocol):
@@ -185,6 +219,10 @@ class ExecutionResult:
     isolation_inspected: bool = False
     image_digest: str | None = None
     workspace_sha256: str | None = None
+    container_created: bool = False
+    execution_started: bool = False
+    execution_duration_seconds: float | None = None
+    timeout_phase: ExecutionTimeoutPhase | None = None
 
 
 class _SandboxPolicyArgs(BaseModel):
@@ -253,6 +291,10 @@ class SandboxRunner:
         cleanup = CleanupStatus.NOT_CREATED
         real_container = isolation_inspected = False
         workspace_digest: str | None = None
+        container_created = execution_started = False
+        execution_duration_seconds: float | None = None
+        timeout_phase: ExecutionTimeoutPhase | None = None
+        active_timeout_phase = ExecutionTimeoutPhase.CONTAINER_SETUP
         operation: asyncio.Task[BackendExecution] | None = None
         cancelled: asyncio.Task[bool] | None = None
         async with self._lock:
@@ -275,25 +317,32 @@ class SandboxRunner:
                     self._limits,
                 )
                 container_id = await asyncio.wait_for(
-                    self._backend.create(spec), timeout=min(30.0, self._limits.timeout_seconds)
+                    self._backend.create(spec), timeout=CONTAINER_SETUP_TIMEOUT_SECONDS
                 )
+                container_created = True
                 if cancellation is not None and cancellation.is_set():
                     status = ExecutionStatus.CANCELLED
                 elif not self._integrity_is_eligible():
                     status = ExecutionStatus.DENIED
                 else:
+                    active_timeout_phase = ExecutionTimeoutPhase.BACKEND_OPERATION
+                    operation_timeout = (
+                        CONTAINER_STARTUP_TIMEOUT_SECONDS
+                        + self._limits.timeout_seconds
+                        + _EXECUTION_REPORTING_GRACE_SECONDS
+                    )
                     operation = asyncio.create_task(
                         self._backend.execute(
                             container_id, self._limits.timeout_seconds, self._limits.output_bytes
                         )
                     )
                     if cancellation is None:
-                        outcome = await asyncio.wait_for(operation, self._limits.timeout_seconds)
+                        outcome = await asyncio.wait_for(operation, operation_timeout)
                     else:
                         cancelled = asyncio.create_task(cancellation.wait())
                         done, _ = await asyncio.wait(
                             {operation, cancelled},
-                            timeout=self._limits.timeout_seconds,
+                            timeout=operation_timeout,
                             return_when=asyncio.FIRST_COMPLETED,
                         )
                         if cancelled in done and cancelled.result():
@@ -307,6 +356,7 @@ class SandboxRunner:
                             await asyncio.gather(operation, return_exceptions=True)
                             cancelled.cancel()
                             status = ExecutionStatus.TIMED_OUT
+                            timeout_phase = ExecutionTimeoutPhase.BACKEND_OPERATION
                             outcome = None
                         else:
                             cancelled.cancel()
@@ -314,6 +364,8 @@ class SandboxRunner:
                     if outcome is not None:
                         real_container = outcome.real_container
                         isolation_inspected = outcome.isolation_inspected
+                        execution_started = outcome.execution_started
+                        execution_duration_seconds = outcome.execution_duration_seconds
                         exit_code = outcome.exit_code
                         stdout, stderr, truncated = (
                             outcome.stdout,
@@ -321,19 +373,36 @@ class SandboxRunner:
                             outcome.truncated,
                         )
                         status = (
-                            ExecutionStatus.RESOURCE_LIMIT
+                            ExecutionStatus.TIMED_OUT
+                            if execution_duration_seconds is not None
+                            and execution_duration_seconds >= self._limits.timeout_seconds
+                            else ExecutionStatus.RESOURCE_LIMIT
                             if truncated or outcome.resource_limited
                             else ExecutionStatus.PASSED
                             if exit_code == 0
                             else ExecutionStatus.COMMAND_FAILED
                         )
+                        if status is ExecutionStatus.TIMED_OUT:
+                            timeout_phase = (
+                                ExecutionTimeoutPhase.WORKLOAD_EXECUTION
+                                if execution_started
+                                else ExecutionTimeoutPhase.BACKEND_OPERATION
+                            )
                         if (
                             not self._integrity_is_eligible()
                             or self._workspace_digest() != workspace_digest
                         ):
                             status = ExecutionStatus.DENIED
+            except SandboxExecutionTimeout as error:
+                status = ExecutionStatus.TIMED_OUT
+                timeout_phase = error.phase
+                execution_started = error.execution_started
+                real_container = error.real_container
+                isolation_inspected = error.isolation_inspected
+                execution_duration_seconds = error.execution_duration_seconds
             except TimeoutError:
                 status = ExecutionStatus.TIMED_OUT
+                timeout_phase = active_timeout_phase
             except asyncio.CancelledError:
                 raise
             except PermissionError:
@@ -380,6 +449,10 @@ class SandboxRunner:
             isolation_inspected,
             self._config.image.split("@")[1] if real_container else None,
             workspace_digest,
+            container_created,
+            execution_started,
+            execution_duration_seconds,
+            timeout_phase,
         )
 
     def _validate_request(self, request: SandboxRequest) -> None:

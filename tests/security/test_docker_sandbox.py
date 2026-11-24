@@ -8,12 +8,15 @@ from pathlib import Path
 
 import pytest
 
+from repopilot.sandbox import execution as execution_module
 from repopilot.sandbox.execution import (
     BackendExecution,
     CleanupStatus,
     ContainerSpec,
     ExecutionStatus,
+    ExecutionTimeoutPhase,
     SandboxConfig,
+    SandboxExecutionTimeout,
     SandboxLimits,
     SandboxRequest,
     SandboxRunner,
@@ -167,14 +170,19 @@ def test_pre_cancelled_run_has_no_execution_side_effects(tmp_path: Path) -> None
 
 
 def test_runtime_timeout_cleans_the_owned_container(tmp_path: Path) -> None:
-    class SlowBackend(FakeBackend):
+    class TimeoutBackend(FakeBackend):
         async def execute(
             self, container_id: str, max_runtime: float, output_limit: int
         ) -> BackendExecution:
-            await asyncio.sleep(5)
-            return BackendExecution(0, "", "")
+            raise SandboxExecutionTimeout(
+                ExecutionTimeoutPhase.WORKLOAD_EXECUTION,
+                execution_started=True,
+                real_container=True,
+                isolation_inspected=True,
+                execution_duration_seconds=max_runtime,
+            )
 
-    backend = SlowBackend()
+    backend = TimeoutBackend()
     manager, handle, runner, _ = _runner(tmp_path, backend, limits=SandboxLimits(timeout_seconds=1))
     try:
         result = asyncio.run(
@@ -182,7 +190,108 @@ def test_runtime_timeout_cleans_the_owned_container(tmp_path: Path) -> None:
         )
 
         assert result.status is ExecutionStatus.TIMED_OUT
+        assert result.timeout_phase is ExecutionTimeoutPhase.WORKLOAD_EXECUTION
+        assert result.execution_started and result.real_container
         assert result.cleanup is CleanupStatus.REMOVED
+        assert backend.cleaned == ["a" * 64]
+    finally:
+        manager.cleanup(handle)
+
+
+def test_slow_successful_creation_is_not_counted_against_workload_deadline(tmp_path: Path) -> None:
+    class SlowCreateBackend(FakeBackend):
+        async def create(self, spec: ContainerSpec) -> str:
+            await asyncio.sleep(1.05)
+            return await super().create(spec)
+
+    backend = SlowCreateBackend()
+    manager, handle, runner, _ = _runner(tmp_path, backend, limits=SandboxLimits(timeout_seconds=1))
+    try:
+        result = asyncio.run(
+            runner.run(SandboxRequest(VerificationCommand.PYTHON_SYNTAX, ("module.py",)))
+        )
+        assert result.status is ExecutionStatus.PASSED
+        assert result.cleanup is CleanupStatus.REMOVED
+        assert result.container_created
+        assert result.execution_duration_seconds is None
+    finally:
+        manager.cleanup(handle)
+
+
+def test_creation_timeout_is_reported_separately_and_does_not_claim_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class StuckCreateBackend(FakeBackend):
+        async def create(self, spec: ContainerSpec) -> str:
+            await asyncio.Event().wait()
+            return "a" * 64
+
+    monkeypatch.setattr(execution_module, "CONTAINER_SETUP_TIMEOUT_SECONDS", 0.01)
+    backend = StuckCreateBackend()
+    manager, handle, runner, original = _runner(tmp_path, backend)
+    try:
+        result = asyncio.run(
+            runner.run(SandboxRequest(VerificationCommand.PYTHON_SYNTAX, ("module.py",)))
+        )
+        assert result.status is ExecutionStatus.TIMED_OUT
+        assert result.timeout_phase is ExecutionTimeoutPhase.CONTAINER_SETUP
+        assert not result.container_created
+        assert not result.execution_started
+        assert result.cleanup is CleanupStatus.NOT_CREATED
+        assert original.read_text(encoding="utf-8") == "VALUE = 1\n"
+        assert not backend.cleaned
+    finally:
+        manager.cleanup(handle)
+
+
+def test_daemon_loss_is_infrastructure_failure_and_owned_container_is_cleaned(
+    tmp_path: Path,
+) -> None:
+    class LostDaemonBackend(FakeBackend):
+        async def execute(self, container_id, max_runtime, output_limit):
+            raise RuntimeError("daemon unavailable")
+
+    backend = LostDaemonBackend()
+    manager, handle, runner, original = _runner(tmp_path, backend)
+    try:
+        result = asyncio.run(
+            runner.run(SandboxRequest(VerificationCommand.PYTHON_SYNTAX, ("module.py",)))
+        )
+        assert result.status is ExecutionStatus.INFRASTRUCTURE_ERROR
+        assert result.execution_started is False
+        assert result.real_container is False
+        assert result.cleanup is CleanupStatus.REMOVED
+        assert backend.cleaned == ["a" * 64]
+        assert original.read_text(encoding="utf-8") == "VALUE = 1\n"
+    finally:
+        manager.cleanup(handle)
+
+
+def test_execution_cancellation_during_startup_cleans_owned_container(tmp_path: Path) -> None:
+    entered_startup = asyncio.Event()
+
+    class StartupBackend(FakeBackend):
+        async def execute(self, container_id, max_runtime, output_limit):
+            entered_startup.set()
+            await asyncio.Event().wait()
+
+    backend = StartupBackend()
+    manager, handle, runner, _ = _runner(tmp_path, backend)
+
+    async def scenario() -> None:
+        task = asyncio.create_task(
+            runner.run(
+                SandboxRequest(VerificationCommand.PYTHON_SYNTAX, ("module.py",)),
+                cancellation=asyncio.Event(),
+            )
+        )
+        await entered_startup.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    try:
+        asyncio.run(scenario())
         assert backend.cleaned == ["a" * 64]
     finally:
         manager.cleanup(handle)

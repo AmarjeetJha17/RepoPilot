@@ -10,16 +10,20 @@ import shutil
 import signal
 import stat
 import sys
+import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
 from repopilot.sandbox.execution import (
+    CONTAINER_STARTUP_TIMEOUT_SECONDS,
     BackendExecution,
     ContainerSpec,
+    ExecutionTimeoutPhase,
     SandboxCleanupError,
     SandboxConfig,
+    SandboxExecutionTimeout,
     SandboxUnsupportedError,
 )
 
@@ -163,22 +167,78 @@ class DockerCliBackend:
             asyncio.create_task(drain(process.stdout, stdout)),
             asyncio.create_task(drain(process.stderr, stderr)),
         )
+        process_wait: asyncio.Task[int] | None = None
+        timed_out = False
+        execution_started_at: datetime | None = None
+        execution_deadline: float | None = None
         try:
-            await asyncio.wait_for(asyncio.gather(process.wait(), *readers), max_runtime)
-        except (TimeoutError, asyncio.CancelledError):
+            startup_deadline = time.monotonic() + CONTAINER_STARTUP_TIMEOUT_SECONDS
+            try:
+                execution_started_at = await self._wait_for_container_start(
+                    container_id, process, startup_deadline
+                )
+            except TimeoutError as error:
+                raise SandboxExecutionTimeout(
+                    ExecutionTimeoutPhase.CONTAINER_STARTUP,
+                    isolation_inspected=True,
+                ) from error
+            now = datetime.now(UTC)
+            elapsed = (now - execution_started_at).total_seconds()
+            if elapsed < 0:
+                raise RuntimeError("Container start time is ahead of the local clock.")
+            execution_deadline = time.monotonic() + max_runtime - elapsed
+
+            completed_at: float | None = None
+
+            async def wait_for_client() -> int:
+                nonlocal completed_at
+                return_code = await process.wait()
+                completed_at = time.monotonic()
+                return return_code
+
+            process_wait = asyncio.create_task(wait_for_client())
+            remaining = max(0.0, execution_deadline - time.monotonic())
+            done, _ = await asyncio.wait({process_wait}, timeout=remaining)
+            timed_out = process_wait not in done or (
+                completed_at is not None and completed_at > execution_deadline
+            )
+            if timed_out:
+                await _stop_client(process)
+            else:
+                await asyncio.wait_for(asyncio.gather(*readers), 5)
+        except SandboxExecutionTimeout:
+            raise
+        except asyncio.CancelledError:
             await _stop_client(process)
             raise
         finally:
-            if process.returncode is None:
-                await _stop_client(process)
-            for reader in readers:
-                reader.cancel()
-            await asyncio.gather(*readers, return_exceptions=True)
+            try:
+                if process.returncode is None:
+                    await _stop_client(process)
+            finally:
+                if process_wait is not None and not process_wait.done():
+                    process_wait.cancel()
+                for reader in readers:
+                    reader.cancel()
+                if process_wait is not None:
+                    await asyncio.gather(process_wait, return_exceptions=True)
+                await asyncio.gather(*readers, return_exceptions=True)
+        if timed_out:
+            assert execution_started_at is not None and execution_deadline is not None
+            elapsed = max(max_runtime, time.monotonic() - execution_deadline + max_runtime)
+            raise SandboxExecutionTimeout(
+                ExecutionTimeoutPhase.WORKLOAD_EXECUTION,
+                execution_started=True,
+                real_container=True,
+                isolation_inspected=True,
+                execution_duration_seconds=elapsed,
+            )
         state = await self._inspect_state(container_id)
         if truncated:
             exit_code, resource_limited = 137, True
         else:
             exit_code, resource_limited = _exit_state(state)
+        duration = _execution_duration(state)
         return BackendExecution(
             exit_code,
             stdout.decode("utf-8", errors="replace"),
@@ -187,7 +247,37 @@ class DockerCliBackend:
             resource_limited,
             real_container=True,
             isolation_inspected=True,
+            execution_started=True,
+            execution_duration_seconds=duration,
         )
+
+    async def _wait_for_container_start(
+        self,
+        container_id: str,
+        process: asyncio.subprocess.Process,
+        deadline: float,
+    ) -> datetime:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Container startup deadline expired.")
+            state = await asyncio.wait_for(self._inspect_state(container_id), timeout=remaining)
+            started_at = _started_at(state)
+            if (
+                started_at is not None
+                and isinstance(state, dict)
+                and (
+                    (state.get("Status") == "running" and state.get("Running") is True)
+                    or (state.get("Status") == "exited" and state.get("Running") is False)
+                )
+            ):
+                return started_at
+            if process.returncode is not None:
+                raise RuntimeError("Container command ended before start was observed.")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Container startup deadline expired.")
+            await asyncio.sleep(min(0.05, remaining))
 
     async def cleanup(self, container_id: str, max_runtime: float) -> bool:
         _validate_id(container_id)
@@ -504,13 +594,47 @@ def _exit_state(value: object) -> tuple[int, bool]:
         or str(value["StartedAt"]).startswith("0001-")
     ):
         raise RuntimeError("Container command exit was not observed.")
-    try:
-        started = datetime.fromisoformat(value["StartedAt"])
-        if started.tzinfo is None:
-            raise ValueError("Missing timezone")
-    except (TypeError, ValueError) as error:
-        raise RuntimeError("Invalid container start timestamp.") from error
+    _started_at(value)
     return value["ExitCode"], value["OOMKilled"]
+
+
+def _started_at(value: object) -> datetime | None:
+    if not isinstance(value, dict):
+        raise RuntimeError("Invalid container state.")
+    raw = value.get("StartedAt")
+    if raw is None or not isinstance(raw, str):
+        raise RuntimeError("Invalid container start timestamp.")
+    if raw.startswith("0001-"):
+        return None
+    try:
+        started_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise RuntimeError("Invalid container start timestamp.") from error
+    if started_at.tzinfo is None:
+        raise RuntimeError("Invalid container start timestamp.")
+    return started_at.astimezone(UTC)
+
+
+def _execution_duration(value: object) -> float:
+    if not isinstance(value, dict):
+        raise RuntimeError("Invalid container state.")
+    started_at = _started_at(value)
+    finished_raw = value.get("FinishedAt")
+    if started_at is None:
+        raise RuntimeError("Container execution timestamps were not observed.")
+    if not isinstance(finished_raw, str):
+        raise RuntimeError("Container execution timestamps were not observed.")
+    if finished_raw.startswith("0001-"):
+        if value.get("Status") == "running" and value.get("Running") is True:
+            return max(0.0, (datetime.now(UTC) - started_at).total_seconds())
+        raise RuntimeError("Container execution timestamps were not observed.")
+    try:
+        finished_at = datetime.fromisoformat(finished_raw.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise RuntimeError("Invalid container finish timestamp.") from error
+    if finished_at.tzinfo is None or finished_at < started_at:
+        raise RuntimeError("Invalid container execution timestamps.")
+    return (finished_at.astimezone(UTC) - started_at).total_seconds()
 
 
 def _check_isolation(spec: ContainerSpec, host: object, mounts: object, env: object) -> None:

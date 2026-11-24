@@ -19,7 +19,9 @@ from repopilot.sandbox.docker_backend import (
 )
 from repopilot.sandbox.execution import (
     CleanupStatus,
+    ExecutionResult,
     ExecutionStatus,
+    ExecutionTimeoutPhase,
     SandboxConfig,
     SandboxLimits,
     SandboxRequest,
@@ -137,13 +139,7 @@ async def verify(
                     manager.check_integrity(handle).matches_baseline
                     and (source / "check.py").read_bytes() == original
                 )
-                ok = (
-                    result.status is expected
-                    and result.cleanup is CleanupStatus.REMOVED
-                    and unchanged
-                )
-                if expected is ExecutionStatus.PASSED:
-                    ok = ok and result.real_container and result.isolation_inspected
+                ok = _scenario_passed(result, expected, unchanged=unchanged, timeout=timeout)
                 outcomes.append(
                     {
                         "scenario": name,
@@ -151,9 +147,14 @@ async def verify(
                         "status": result.status.value,
                         "exit_code": result.exit_code,
                         "container_removed": result.cleanup is CleanupStatus.REMOVED,
-                        "container_created": result.cleanup is not CleanupStatus.NOT_CREATED,
+                        "container_created": result.container_created,
                         "isolation_inspected": result.isolation_inspected,
-                        "real_command_observed": result.real_container,
+                        "execution_started": result.execution_started,
+                        "execution_duration_seconds": result.execution_duration_seconds,
+                        "timeout_phase": result.timeout_phase.value
+                        if result.timeout_phase
+                        else None,
+                        "real_command_observed": result.execution_started,
                         "runtime_readonly_verified": name == "readonly" and ok,
                         "workspace_sha256": hashlib.sha256(original).hexdigest(),
                         "execution_workspace_sha256": result.workspace_sha256,
@@ -170,6 +171,32 @@ async def verify(
         )
         report["independent_coding_task_verification"] = False
         return report
+
+
+def _scenario_passed(
+    result: ExecutionResult,
+    expected: ExecutionStatus,
+    *,
+    unchanged: bool,
+    timeout: float,
+) -> bool:
+    if (
+        result.status is not expected
+        or result.cleanup is not CleanupStatus.REMOVED
+        or not unchanged
+        or not result.container_created
+        or not result.real_container
+        or not result.isolation_inspected
+        or not result.execution_started
+    ):
+        return False
+    if expected is ExecutionStatus.TIMED_OUT:
+        return (
+            result.timeout_phase is ExecutionTimeoutPhase.WORKLOAD_EXECUTION
+            and result.execution_duration_seconds is not None
+            and result.execution_duration_seconds >= timeout
+        )
+    return True
 
 
 def main() -> int:
