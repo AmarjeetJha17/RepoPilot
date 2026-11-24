@@ -1,22 +1,45 @@
 """Offline verification of Docker diagnostics and command exit semantics."""
 
 import asyncio
+import dataclasses
 import json
 import stat
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from scripts.verify_docker_sandbox import _scenario_passed
 
 from repopilot.sandbox import docker_backend as docker
 from repopilot.sandbox.execution import (
+    CleanupStatus,
     ContainerSpec,
+    ExecutionResult,
+    ExecutionStatus,
+    ExecutionTimeoutPhase,
     SandboxConfig,
+    SandboxExecutionTimeout,
     SandboxLimits,
     SandboxUnsupportedError,
+    VerificationCommand,
 )
 
 IMAGE = "example.invalid/reviewed@sha256:" + "a" * 64
+
+
+def _exit_state(exit_code: int = 0, *, seconds: float = 0.1) -> dict[str, object]:
+    finished = datetime.now(UTC)
+    started = finished - timedelta(seconds=seconds)
+    return {
+        "Status": "exited",
+        "Running": False,
+        "ExitCode": exit_code,
+        "OOMKilled": False,
+        "Error": "",
+        "StartedAt": started.isoformat(),
+        "FinishedAt": finished.isoformat(),
+    }
 
 
 def immediate(coroutine):
@@ -27,6 +50,40 @@ def immediate(coroutine):
     raise AssertionError("Fake operations must not wait for external resources")
 
 
+def test_smoke_timeout_requires_real_started_workload_and_successful_cleanup():
+    result = ExecutionResult(
+        "smoke-test",
+        VerificationCommand.PYTEST,
+        ExecutionStatus.TIMED_OUT,
+        None,
+        3.1,
+        cleanup=CleanupStatus.REMOVED,
+        real_container=True,
+        isolation_inspected=True,
+        container_created=True,
+        execution_started=True,
+        execution_duration_seconds=3.0,
+        timeout_phase=ExecutionTimeoutPhase.WORKLOAD_EXECUTION,
+    )
+    assert _scenario_passed(result, ExecutionStatus.TIMED_OUT, unchanged=True, timeout=3.0)
+
+    for invalid in (
+        {"container_created": False},
+        {"real_container": False},
+        {"isolation_inspected": False},
+        {"execution_started": False},
+        {"cleanup": CleanupStatus.FAILED},
+        {"timeout_phase": ExecutionTimeoutPhase.CONTAINER_STARTUP},
+        {"execution_duration_seconds": 2.9},
+    ):
+        assert not _scenario_passed(
+            dataclasses.replace(result, **invalid),
+            ExecutionStatus.TIMED_OUT,
+            unchanged=True,
+            timeout=3.0,
+        )
+
+
 @pytest.mark.parametrize("code", [0, 1, 2, 137])
 def test_container_state_preserves_real_exit_code(code):
     state = {
@@ -35,6 +92,7 @@ def test_container_state_preserves_real_exit_code(code):
         "ExitCode": code,
         "OOMKilled": code == 137,
         "StartedAt": "2026-11-23T00:00:00Z",
+        "FinishedAt": "2026-11-23T00:00:01Z",
         "Error": "",
     }
     assert docker._exit_state(state) == (code, code == 137)
@@ -59,6 +117,7 @@ def test_invalid_or_unstarted_state_cannot_claim_command_success(update):
         "ExitCode": 0,
         "OOMKilled": False,
         "StartedAt": "2026-11-23T00:00:00Z",
+        "FinishedAt": "2026-11-23T00:00:01Z",
         "Error": "",
     }
     state.update(update)
@@ -291,14 +350,7 @@ def test_execute_uses_selected_context_and_inspects_container_exit(
         return None
 
     async def state(_id):
-        return {
-            "Status": "exited",
-            "Running": False,
-            "ExitCode": exit_code,
-            "OOMKilled": False,
-            "Error": "",
-            "StartedAt": "2026-11-23T00:00:00Z",
-        }
+        return _exit_state(exit_code)
 
     monkeypatch.setattr(docker.asyncio, "create_subprocess_exec", spawn)
     monkeypatch.setattr(backend, "inspect_isolation", inspect)
@@ -307,6 +359,221 @@ def test_execute_uses_selected_context_and_inspects_container_exit(
     assert executed_argv[:3] == ["docker", "--context", context]
     assert result.exit_code == exit_code
     assert result.real_container and result.isolation_inspected
+
+
+def test_actual_workload_timeout_requires_observed_start_and_reports_safe_evidence(
+    monkeypatch, tmp_path
+):
+    backend = docker.DockerCliBackend()
+    identifier = "a" * 64
+    backend._owned[identifier] = ContainerSpec("run", IMAGE, tmp_path, ("python",), SandboxLimits())
+    stopped = []
+
+    class Stream:
+        async def read(self, size):
+            await asyncio.Event().wait()
+
+    class Process:
+        stdout = stderr = Stream()
+        returncode = None
+
+        async def wait(self):
+            await asyncio.Event().wait()
+            return -9
+
+    async def spawn(*args, **kwargs):
+        return Process()
+
+    async def inspect(_id):
+        return None
+
+    async def state(_id):
+        return {
+            "Status": "running",
+            "Running": True,
+            "StartedAt": datetime.now(UTC).isoformat(),
+        }
+
+    async def stop(process):
+        process.returncode = -9
+        stopped.append(True)
+
+    monkeypatch.setattr(docker.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(backend, "inspect_isolation", inspect)
+    monkeypatch.setattr(backend, "_inspect_state", state)
+    monkeypatch.setattr(docker, "_stop_client", stop)
+    with pytest.raises(SandboxExecutionTimeout) as error:
+        asyncio.run(backend.execute(identifier, 0.02, 1024))
+    assert error.value.phase is ExecutionTimeoutPhase.WORKLOAD_EXECUTION
+    assert error.value.execution_started
+    assert error.value.real_container
+    assert error.value.isolation_inspected
+    assert error.value.execution_duration_seconds >= 0.02
+    assert stopped == [True]
+
+
+def test_slow_container_startup_does_not_consume_workload_timeout(monkeypatch, tmp_path):
+    backend = docker.DockerCliBackend()
+    identifier = "a" * 64
+    backend._owned[identifier] = ContainerSpec("run", IMAGE, tmp_path, ("python",), SandboxLimits())
+
+    class Stream:
+        async def read(self, size):
+            return b""
+
+    class Process:
+        stdout = stderr = Stream()
+        returncode = None
+
+        async def wait(self):
+            self.returncode = 0
+            return 0
+
+    async def spawn(*args, **kwargs):
+        return Process()
+
+    async def inspect(_id):
+        return None
+
+    calls = 0
+
+    async def state(_id):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await asyncio.sleep(0.07)
+            return {"Status": "created", "Running": False, "StartedAt": "0001-01-01T00:00:00Z"}
+        if calls == 2:
+            return {
+                "Status": "running",
+                "Running": True,
+                "StartedAt": datetime.now(UTC).isoformat(),
+            }
+        return _exit_state(seconds=0.01)
+
+    monkeypatch.setattr(docker, "CONTAINER_STARTUP_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr(docker.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(backend, "inspect_isolation", inspect)
+    monkeypatch.setattr(backend, "_inspect_state", state)
+    result = asyncio.run(backend.execute(identifier, 0.05, 1024))
+    assert result.exit_code == 0
+    assert result.execution_started
+    assert result.execution_duration_seconds is not None
+    assert result.execution_duration_seconds < 0.05
+
+
+def test_startup_timeout_does_not_claim_workload_started(monkeypatch, tmp_path):
+    backend = docker.DockerCliBackend()
+    identifier = "a" * 64
+    backend._owned[identifier] = ContainerSpec("run", IMAGE, tmp_path, ("python",), SandboxLimits())
+
+    class Stream:
+        async def read(self, size):
+            await asyncio.Event().wait()
+
+    class Process:
+        stdout = stderr = Stream()
+        returncode = None
+
+        async def wait(self):
+            await asyncio.Event().wait()
+            return -9
+
+    async def spawn(*args, **kwargs):
+        return Process()
+
+    async def inspect(_id):
+        return None
+
+    async def state(_id):
+        return {"Status": "created", "Running": False, "StartedAt": "0001-01-01T00:00:00Z"}
+
+    async def stop(process):
+        process.returncode = -9
+
+    monkeypatch.setattr(docker, "CONTAINER_STARTUP_TIMEOUT_SECONDS", 0.02)
+    monkeypatch.setattr(docker.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(backend, "inspect_isolation", inspect)
+    monkeypatch.setattr(backend, "_inspect_state", state)
+    monkeypatch.setattr(docker, "_stop_client", stop)
+    with pytest.raises(SandboxExecutionTimeout) as error:
+        asyncio.run(backend.execute(identifier, 0.02, 1024))
+    assert error.value.phase is ExecutionTimeoutPhase.CONTAINER_STARTUP
+    assert not error.value.execution_started
+    assert not error.value.real_container
+    assert error.value.isolation_inspected
+
+
+def test_cancellation_during_container_startup_stops_client_and_drains_tasks(monkeypatch, tmp_path):
+    backend = docker.DockerCliBackend()
+    identifier = "a" * 64
+    backend._owned[identifier] = ContainerSpec("run", IMAGE, tmp_path, ("python",), SandboxLimits())
+    inspecting = asyncio.Event()
+    stopped = []
+
+    class Stream:
+        async def read(self, size):
+            await asyncio.Event().wait()
+
+    class Process:
+        stdout = stderr = Stream()
+        returncode = None
+
+    async def spawn(*args, **kwargs):
+        return Process()
+
+    async def inspect(_id):
+        return None
+
+    async def state(_id):
+        inspecting.set()
+        await asyncio.Event().wait()
+
+    async def stop(process):
+        process.returncode = -9
+        stopped.append(True)
+
+    async def scenario():
+        task = asyncio.create_task(backend.execute(identifier, 1, 1024))
+        await inspecting.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not [
+            pending for pending in asyncio.all_tasks() if pending is not asyncio.current_task()
+        ]
+
+    monkeypatch.setattr(docker.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(backend, "inspect_isolation", inspect)
+    monkeypatch.setattr(backend, "_inspect_state", state)
+    monkeypatch.setattr(docker, "_stop_client", stop)
+    asyncio.run(scenario())
+    assert stopped == [True]
+
+
+def test_create_timeout_cleans_only_owned_partial_container(monkeypatch, tmp_path):
+    backend = docker.DockerCliBackend()
+    spec = ContainerSpec("timed-setup", IMAGE, tmp_path, ("python",), SandboxLimits())
+    cleaned = []
+
+    async def no_op(*args):
+        return None
+
+    async def capture(*args, **kwargs):
+        raise TimeoutError("create timed out")
+
+    async def cleanup(name, execution_id):
+        cleaned.append((name, execution_id))
+        return True
+
+    monkeypatch.setattr(backend, "_validate_host_environment", lambda _: None)
+    monkeypatch.setattr(backend, "_verify_daemon", no_op)
+    monkeypatch.setattr(backend, "_verify_image", no_op)
+    monkeypatch.setattr(backend, "_cleanup_partial", cleanup)
+    monkeypatch.setattr(docker, "_capture", capture)
+    with pytest.raises(TimeoutError):
+        asyncio.run(backend.create(spec))
+    assert cleaned == [("repopilot-timed-setup", "timed-setup")]
 
 
 def test_cleanup_checks_label_and_observed_removal(monkeypatch, tmp_path):
@@ -434,7 +701,12 @@ def test_concurrent_stream_output_is_bounded_and_truncated(monkeypatch, tmp_path
         return None
 
     async def state(_id):
-        return {"Status": "running", "Running": True}
+        return {
+            "Status": "running",
+            "Running": True,
+            "StartedAt": datetime.now(UTC).isoformat(),
+            "FinishedAt": "0001-01-01T00:00:00Z",
+        }
 
     monkeypatch.setattr(docker.asyncio, "create_subprocess_exec", spawn)
     monkeypatch.setattr(backend, "inspect_isolation", inspect)
@@ -482,6 +754,15 @@ def test_cancellation_stops_client_and_drains_tasks(monkeypatch, tmp_path):
 
     monkeypatch.setattr(docker.asyncio, "create_subprocess_exec", spawn)
     monkeypatch.setattr(backend, "inspect_isolation", inspect)
+
+    async def state(_id):
+        return {
+            "Status": "running",
+            "Running": True,
+            "StartedAt": datetime.now(UTC).isoformat(),
+        }
+
+    monkeypatch.setattr(backend, "_inspect_state", state)
     monkeypatch.setattr(docker, "_stop_client", stop)
     asyncio.run(scenario())
     assert stopped == [True]
